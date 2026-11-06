@@ -1,8 +1,11 @@
 import * as XLSX from "@e965/xlsx";
 import {
   createEmptyState,
+  claimBuzzer,
+  getBackendSyncStatus,
   newId,
   readState,
+  subscribeToBackendStatus,
   subscribeToStateChanges,
   updateState,
 } from "./store.js";
@@ -10,11 +13,11 @@ import "./styles.css";
 
 const app = document.querySelector("#app");
 const route = window.location.pathname.replace(/\/+$/, "") || "/";
-const page = route.endsWith("/admin.php")
+const page = route === "/admin"
   ? "admin"
-  : route.endsWith("/quiz.php")
+  : route === "/quiz"
     ? "quiz"
-    : route.endsWith("/player.php")
+    : route === "/player"
       ? "player"
       : "home";
 
@@ -47,6 +50,18 @@ function getCurrentQuestion(state) {
   return state.questions.find((question) => question.id === state.currentQuestionId) ?? null;
 }
 
+function renderBackendStatus(status) {
+  for (const element of document.querySelectorAll("#sync-status, #admin-sync-status")) {
+    if (element.lastChild) element.lastChild.textContent = ` ${status.message}`;
+    const live = status.state === "live";
+    const error = status.state === "error";
+    element.style.backgroundColor = live ? "#f0f8f4" : error ? "#fff0f0" : "#fff5e8";
+    element.style.color = live ? "#318263" : error ? "#a6383e" : "#96621e";
+    const dot = element.querySelector("i");
+    if (dot) dot.style.backgroundColor = live ? "#5de0a6" : error ? "#df6268" : "#e7a53f";
+  }
+}
+
 function showToast(message, isError = false) {
   toastMessage = message;
   toastVisible = true;
@@ -67,76 +82,56 @@ function sharedShell(content, className = "") {
     <div class="app-shell ${className}">
       <header class="topbar">
         <a class="brand" href="/">
-          <span class="brand-mark" aria-hidden="true">L</span>
-          <span><strong>LCC Lokal</strong><small>LOMBA CERDAS CERMAT</small></span>
+          <span class="brand-mark" aria-hidden="true">Z</span>
+          <span><strong>ZAWA SMART COMPETITION</strong><small>LOMBA CERDAS CERMAT</small></span>
         </a>
         <nav class="topnav" aria-label="Navigasi utama">
-          <a href="/admin.php" class="${page === "admin" ? "is-current" : ""}">Admin</a>
-          <a href="/quiz.php" class="${page === "quiz" ? "is-current" : ""}">Layar kuis</a>
-          <a href="/player.php" class="${page === "player" ? "is-current" : ""}">Peserta</a>
+          ${page === "admin" ? '<a href="/admin" class="is-current">Panel admin</a>' : ""}
+          <a href="/quiz" class="${page === "quiz" ? "is-current" : ""}">Papan skor</a>
+          ${page === "home" ? '<a href="#cara-bermain">Cara bermain</a>' : ""}
+          <a class="nav-join" href="/player">${page === "player" ? "Pilih tim" : "Gabung sebagai peserta"}</a>
         </nav>
       </header>
       ${content}
       <div id="toast" class="toast-message" role="status" aria-live="polite" ${toastVisible ? "" : "hidden"}>${escapeHtml(toastMessage)}</div>
-      <footer class="app-footer">Data tersimpan di browser ini · Buka tiap layar pada tab berbeda untuk bermain bersama</footer>
+      <footer class="app-footer"><span id="sync-status" class="sync-pill"><i></i> MENGHUBUNGKAN...</span><br />Data tersimpan di browser ini dan disinkronkan langsung ke layar lain saat server tersedia.</footer>
     </div>
   `;
 }
 
 function renderHome(state) {
-  const cards = [
-    {
-      href: "/admin.php",
-      number: "01",
-      title: "Panel admin",
-      description: "Atur peserta, bank soal, skor, dan kendali babak.",
-      icon: "⚙",
-    },
-    {
-      href: "/quiz.php",
-      number: "02",
-      title: "Layar kuis",
-      description: "Tampilkan pertanyaan, status rebutan, dan papan skor.",
-      icon: "▤",
-    },
-    {
-      href: "/player.php",
-      number: "03",
-      title: "Buzzer peserta",
-      description: "Pilih tim dan tekan tombol saat babak rebutan dibuka.",
-      icon: "●",
-    },
-  ];
-
   app.innerHTML = sharedShell(`
     <main class="home-content">
-      <section class="hero-panel">
-        <div class="eyebrow"><span class="live-dot"></span> MODE LOKAL · TANPA SERVER</div>
-        <h1>Siap mulai<br /><span>adu cepat?</span></h1>
-        <p>Kelola kuis, pantau skor, dan buka buzzer peserta dari satu aplikasi yang berjalan langsung di browser.</p>
-        <a class="button button-primary" href="/admin.php">Buka panel admin <span aria-hidden="true">↗</span></a>
-        <div class="hero-stats">
-          <div><strong>${state.teams.length}</strong><span>tim terdaftar</span></div>
-          <div><strong>${state.questions.length}</strong><span>soal di bank</span></div>
-          <div><strong>${state.rebuttalOpen ? "ON" : "OFF"}</strong><span>babak rebutan</span></div>
+      <section class="hero-panel home-hero">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="live-dot"></span> ZAWA SMART COMPETITION</div>
+          <h1>Lomba Cerdas<br /><span>Cermat</span></h1>
+          <p class="hero-slogan">Smart Generation Empower Ummah</p>
+          <p class="hero-description">Tunjukkan wawasan, kekompakan, dan kecepatan timmu. Pilih tim untuk bergabung dan bersiap menjadi juara.</p>
+          <div class="hero-cta">
+            <a class="button button-primary" href="/player">Gabung sebagai peserta <span aria-hidden="true">→</span></a>
+            <a class="button button-hero-outline" href="/quiz">Lihat papan skor <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="participant-proof"><span class="proof-avatars" aria-hidden="true"><i>✦</i><i>✦</i><i>✦</i></span><span><strong>${state.teams.length} tim siap bertanding</strong><small>Keseruan dimulai dari sini</small></span></div>
         </div>
-        <div class="hero-decoration" aria-hidden="true"><span>?</span><i></i><b></b></div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="art-orbit orbit-outer"></div><div class="art-orbit orbit-inner"></div>
+          <div class="art-star star-one">✦</div><div class="art-star star-two">✧</div>
+          <div class="trophy-card"><span class="trophy-glow"></span><span class="trophy-icon">🏆</span><span class="trophy-label">BE READY<br /><strong>TO COMPETE</strong></span></div>
+          <div class="art-caption"><span class="caption-dot"></span> THINK · BUZZ · WIN</div>
+        </div>
       </section>
-      <section class="home-menu">
-        <div class="section-kicker">MULAI DARI SINI</div>
-        <h2>Pilih tampilan</h2>
-        <div class="menu-grid">
-          ${cards.map((card) => `
-            <a class="menu-card" href="${card.href}">
-              <span class="menu-icon">${card.icon}</span>
-              <span class="menu-number">${card.number}</span>
-              <h3>${card.title}</h3>
-              <p>${card.description}</p>
-              <span class="menu-arrow" aria-hidden="true">→</span>
-            </a>
-          `).join("")}
+      <section class="participant-section" id="cara-bermain">
+        <div class="section-heading">
+          <div><div class="section-kicker">SAATNYA TUNJUKKAN KEMAMPUANMU</div><h2>Satu lomba, banyak kesempatan.</h2><p>Ikuti setiap babak dan jadilah bagian dari keseruan kompetisi.</p></div>
+          <a class="section-link" href="/quiz">Pantau papan skor <span aria-hidden="true">↗</span></a>
         </div>
-        <div class="local-note"><span aria-hidden="true">⌁</span><p><strong>Semua data hanya di browser ini.</strong> Layar Admin, Kuis, dan Peserta akan saling mengikuti selama dibuka pada browser dan alamat lokal yang sama.</p></div>
+        <div class="participant-grid">
+          <article class="participant-card"><span class="participant-step">01</span><span class="participant-icon icon-team" aria-hidden="true">♧</span><h3>Pilih timmu</h3><p>Masuk sebagai peserta dan pilih nama tim yang akan kamu wakili.</p></article>
+          <article class="participant-card"><span class="participant-step">02</span><span class="participant-icon icon-buzz" aria-hidden="true">ϟ</span><h3>Siaga untuk rebutan</h3><p>Perhatikan soal di layar dan bersiap tekan buzzer saat babak dibuka.</p></article>
+          <article class="participant-card"><span class="participant-step">03</span><span class="participant-icon icon-win" aria-hidden="true">✦</span><h3>Raih poin, jadi juara</h3><p>Jawab dengan tepat, kumpulkan poin, dan pantau posisi timmu.</p></article>
+        </div>
+        <div class="join-banner"><div><span class="banner-kicker">KOMPETISI MENUNGGUMU</span><h2>Siap membawa timmu menuju kemenangan?</h2><p>Masuk sekarang, pilih tim, dan bersiap untuk babak berikutnya.</p></div><a class="button button-banner" href="/player">Masuk sebagai peserta <span aria-hidden="true">→</span></a></div>
       </section>
     </main>
   `);
@@ -201,11 +196,11 @@ function renderAdmin(state) {
     <main class="page-content admin-page">
       <div class="page-heading">
         <div><div class="section-kicker">RUANG KENDALI</div><h1>Panel admin</h1><p>Semua kendali lomba dalam satu tempat.</p></div>
-        <a class="button button-dark" href="/quiz.php" target="_blank" rel="noreferrer">Buka layar kuis <span aria-hidden="true">↗</span></a>
+        <a class="button button-dark" href="/quiz" target="_blank" rel="noreferrer">Buka layar kuis <span aria-hidden="true">↗</span></a>
       </div>
 
       <section class="control-card">
-        <div class="card-title-row"><div><div class="section-kicker">STATUS LANGSUNG</div><h2>Kendali kuis</h2></div><span class="sync-pill"><i></i> TERSINKRON</span></div>
+        <div class="card-title-row"><div><div class="section-kicker">STATUS LANGSUNG</div><h2>Kendali kuis</h2></div><span class="sync-pill" id="admin-sync-status"><i></i> MENGHUBUNGKAN...</span></div>
         <div class="status-grid">
           <div class="status-cell status-question"><span>SOAL AKTIF</span><strong>${escapeHtml(currentQuestion?.text || "Belum ada soal dipilih")}</strong></div>
           <div class="status-cell"><span>BUZZER</span><strong class="${state.buzzerTeamId ? "text-red" : "text-blue"}">${escapeHtml(state.teams.find((team) => team.id === state.buzzerTeamId)?.name || "Belum ada")}</strong></div>
@@ -363,7 +358,7 @@ function renderPlayer(state) {
   app.innerHTML = sharedShell(`
     <main class="player-page">
       <section class="player-card player-active-card">
-        <div class="player-topline"><span class="player-emblem small-emblem">LCC</span><a class="switch-team" href="/player.php">Ganti tim</a></div>
+        <div class="player-topline"><span class="player-emblem small-emblem">LCC</span><a class="switch-team" href="/player">Ganti tim</a></div>
         <div class="section-kicker">PESERTA TERHUBUNG</div>
         <h1>${escapeHtml(selectedTeam.name)}</h1>
         <div class="player-score">${formatScore(selectedTeam.score)} <span>poin</span></div>
@@ -381,6 +376,7 @@ function render() {
     else if (page === "quiz") renderQuiz(state);
     else if (page === "player") renderPlayer(state);
     else renderHome(state);
+    renderBackendStatus(getBackendSyncStatus());
   } catch (error) {
     app.innerHTML = `
       <main class="fatal-error">
@@ -524,7 +520,7 @@ async function handleSubmit(event) {
     if (form.dataset.form === "player-select") {
       const teamId = String(formData.get("team_id") ?? "");
       if (!teamId) throw new Error("Pilih tim terlebih dahulu.");
-      window.location.href = `/player.php?team_id=${encodeURIComponent(teamId)}`;
+      window.location.href = `/player?team_id=${encodeURIComponent(teamId)}`;
     }
   } catch (error) {
     showToast(error.message, true);
@@ -560,6 +556,7 @@ async function handleClick(event) {
     if (!window.confirm("Data lokal yang rusak akan diganti dengan data contoh baru. Lanjutkan?")) return;
     try {
       localStorage.removeItem("lcc-local-state-v1");
+      localStorage.removeItem("lcc-backend-cache-v1");
       render();
       showToast("Data lokal berhasil dibuat ulang.");
     } catch (error) {
@@ -582,13 +579,7 @@ async function handleClick(event) {
   if (action === "buzz") {
     const teamId = button.dataset.team;
     try {
-      let accepted = false;
-      await updateState((state) => {
-        if (state.rebuttalOpen && !state.buzzerTeamId && state.teams.some((team) => team.id === teamId)) {
-          state.buzzerTeamId = teamId;
-          accepted = true;
-        }
-      });
+      const accepted = await claimBuzzer(teamId);
       if (accepted) {
         const team = readState().teams.find((entry) => entry.id === teamId);
         playTeamSound(team);
@@ -706,4 +697,5 @@ app.addEventListener("change", (event) => {
 });
 
 subscribeToStateChanges(render);
+subscribeToBackendStatus(renderBackendStatus);
 render();

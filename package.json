@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test tests/backend-migration.spec.ts tests/full-app.spec.ts --project=chromium",
+    "test:e2e:dev": "ZAWA_E2E_USE_DEV_SERVERS=1 ZAWA_E2E_FRONTEND_URL=http://127.0.0.1:5173 ZAWA_E2E_BACKEND_URL=http://127.0.0.1:3000 playwright test tests/full-app.spec.ts --project=chromium --workers=1"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3"

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const useDevServers = process.env.ZAWA_E2E_USE_DEV_SERVERS === '1';
+
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
@@ -13,7 +15,6 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
-  /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
@@ -25,11 +26,10 @@ export default defineConfig({
   reporter: 'html',
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
-    /* Base URL to use in actions like `await page.goto('')`. */
-    // baseURL: 'http://localhost:3000',
-
-    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
+    baseURL: process.env.ZAWA_E2E_FRONTEND_URL ?? 'http://127.0.0.1:5174',
+    acceptDownloads: true,
     trace: 'on-first-retry',
+    video: 'on',
   },
 
   /* Configure projects for major browsers */
@@ -70,10 +70,19 @@ export default defineConfig({
     // },
   ],
 
-  /* Run your local dev server before starting the tests */
-  // webServer: {
-  //   command: 'npm run start',
-  //   url: 'http://localhost:3000',
-  //   reuseExistingServer: !process.env.CI,
-  // },
+  webServer: useDevServers ? undefined : [
+    {
+      command: 'node tests/start-backend.js',
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
+      url: 'http://127.0.0.1:3310/health',
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: 'node tests/start-frontend.js',
+      url: 'http://127.0.0.1:5174',
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+  ],
 });
