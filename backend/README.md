@@ -11,6 +11,7 @@ sekaligus.
 | `PORT` | `3000` | Port API backend |
 | `HOST` | `127.0.0.1` | Alamat bind; runner gabungan mengatur `0.0.0.0` |
 | `FRONTEND_PORT` | `5173` | Port frontend yang origin IP/LAN-nya diizinkan |
+| `BUZZER_START_DELAY_MS` | `2000` | Waktu persiapan sebelum buzzer dibuka serentak |
 | `SQLITE_PATH` | `./data/zawa.sqlite` | Lokasi database |
 | `FRONTEND_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Origin tambahan yang diizinkan, dipisahkan koma |
 
@@ -29,6 +30,13 @@ membutuhkan pengaturan origin manual.
   mengembalikan HTTP 409 dan snapshot terbaru.
 - `GET /api/teams` dan `GET /api/questions` — membaca koleksi domain.
 - `POST /api/buzzer` — klaim buzzer diproses atomik.
+
+Saat babak dibuka atau buzzer direset, backend menetapkan `buzzerOpensAt`
+berdasarkan jam server dan mengirimkannya ke seluruh peserta. Klien menunggu
+waktu tersebut sebelum menampilkan tombol aktif; backend juga menolak klaim
+yang datang lebih awal. Penyelarasan ini mengurangi pengaruh fase polling dan
+perbedaan jam perangkat, tetapi latensi jaringan/perangkat tetap dapat
+menimbulkan selisih kecil yang tidak bisa dihilangkan sepenuhnya.
 
 Backend tidak menyediakan autentikasi admin. Jangan mengeksposnya ke jaringan
 yang tidak tepercaya tanpa menambahkan autentikasi dan HTTPS.

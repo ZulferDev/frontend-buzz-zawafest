@@ -6,6 +6,8 @@ defaultBackendUrl.port = import.meta.env?.VITE_API_PORT || "3000";
 const BACKEND_URL = (import.meta.env?.VITE_API_URL || defaultBackendUrl.toString()).replace(/\/+$/, "");
 const RECONNECT_DELAY = 3000;
 const POLL_INTERVAL = 250;
+let serverClockOffset = 0;
+let bestClockSyncRtt = Infinity;
 
 let localGeneration = 0;
 let backendRevision = -1;
@@ -31,6 +33,7 @@ export function createEmptyState() {
     questions: [],
     currentQuestionId: null,
     rebuttalOpen: false,
+    buzzerOpensAt: null,
     buzzerTeamId: null,
     screen: "question",
     updatedAt: Date.now(),
@@ -215,7 +218,12 @@ export function getBackendSyncStatus() {
   return backendStatus;
 }
 
+export function getServerTime() {
+  return Date.now() + serverClockOffset;
+}
+
 async function requestJson(url, options = {}) {
+  const requestStartedAt = Date.now();
   const response = await fetch(url, {
     ...options,
     cache: "no-store",
@@ -224,6 +232,14 @@ async function requestJson(url, options = {}) {
       ...options.headers,
     },
   });
+  const requestFinishedAt = Date.now();
+  const serverTimeHeader = response.headers.get("X-Server-Time");
+  const serverTime = serverTimeHeader === null ? Number.NaN : Number(serverTimeHeader);
+  const roundTripTime = requestFinishedAt - requestStartedAt;
+  if (Number.isFinite(serverTime) && roundTripTime <= bestClockSyncRtt) {
+    bestClockSyncRtt = roundTripTime;
+    serverClockOffset = serverTime - (requestStartedAt + requestFinishedAt) / 2;
+  }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const error = new Error(body?.message || `Server merespons HTTP ${response.status}.`);

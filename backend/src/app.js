@@ -6,6 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { RevisionConflictError, StateValidationError } from "./database.js";
 
 const DEFAULT_BUZZER_CLAIM_WINDOW_MS = 150;
+const DEFAULT_BUZZER_START_DELAY_MS = 2000;
 
 function isPrivateIPv4(hostname) {
   const octets = hostname.split(".").map(Number);
@@ -47,10 +48,14 @@ export function createApp({
   store,
   allowedOrigins = [],
   frontendPort = 5173,
+  buzzerStartDelayMs = DEFAULT_BUZZER_START_DELAY_MS,
   buzzerClaimWindowMs = DEFAULT_BUZZER_CLAIM_WINDOW_MS,
 }) {
   if (!Number.isInteger(frontendPort) || frontendPort < 1 || frontendPort > 65535) {
     throw new Error("frontendPort harus berupa bilangan bulat antara 1 dan 65535.");
+  }
+  if (!Number.isSafeInteger(buzzerStartDelayMs) || buzzerStartDelayMs < 0 || buzzerStartDelayMs > 30_000) {
+    throw new Error("buzzerStartDelayMs harus berupa bilangan bulat antara 0 dan 30000.");
   }
   if (!Number.isInteger(buzzerClaimWindowMs) || buzzerClaimWindowMs < 0 || buzzerClaimWindowMs > 1000) {
     throw new Error("buzzerClaimWindowMs harus berupa bilangan bulat antara 0 dan 1000.");
@@ -127,8 +132,13 @@ export function createApp({
     origin: (origin) => originAllowed(origin) ? origin : null,
     allowMethods: ["GET", "PUT", "POST", "OPTIONS"],
     allowHeaders: ["Content-Type"],
+    exposeHeaders: ["X-Server-Time"],
     maxAge: 86400,
   }));
+  app.use("/api/*", async (context, next) => {
+    await next();
+    context.header("X-Server-Time", String(Date.now()));
+  });
   app.use("/api/state", bodyLimit({ maxSize: 5 * 1024 * 1024 }));
   app.use("/api/buzzer", bodyLimit({ maxSize: 16 * 1024 }));
   app.get("/health", (context) => context.json({ status: "ok" }));
@@ -165,7 +175,7 @@ export function createApp({
     }
 
     try {
-      const snapshot = store.replace(body.state, body.expectedRevision);
+      const snapshot = store.replace(body.state, body.expectedRevision, buzzerStartDelayMs);
       return context.json(snapshot);
     } catch (error) {
       if (error instanceof RevisionConflictError) {

@@ -3,6 +3,7 @@ import {
   createEmptyState,
   claimBuzzer,
   getBackendSyncStatus,
+  getServerTime,
   newId,
   readState,
   subscribeToBackendStatus,
@@ -28,6 +29,7 @@ let toastVisible = false;
 let toastTimer;
 let lastBuzzId = null;
 let audioContext;
+let buzzerStartTimer;
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (character) => {
@@ -344,6 +346,7 @@ function renderPlayer(state) {
 
   const hasBuzzed = state.buzzerTeamId === selectedTeam.id;
   const otherBuzzed = state.buzzerTeamId && !hasBuzzed;
+  const buzzerOpensAt = state.buzzerOpensAt;
   let buzzerContent;
   if (!state.rebuttalOpen) {
     buzzerContent = `<div class="player-message message-wait"><span>◷</span><strong>Menunggu babak rebutan</strong><p>Admin akan membuka buzzer sebentar lagi.</p></div>`;
@@ -351,6 +354,10 @@ function renderPlayer(state) {
     buzzerContent = `<div class="player-message message-win"><span>✓</span><strong>Kamu yang tercepat!</strong><p>Tunggu arahan dari pembawa acara.</p></div>`;
   } else if (otherBuzzed) {
     buzzerContent = `<div class="player-message message-lost"><span>ϟ</span><strong>Tim lain lebih dulu</strong><p>Babak ini sudah dikunci.</p></div>`;
+  } else if (!Number.isFinite(buzzerOpensAt)) {
+    buzzerContent = `<div class="player-message message-wait"><span>◷</span><strong>Menyiapkan babak</strong><p>Menyinkronkan waktu mulai bersama...</p></div>`;
+  } else if (getServerTime() < buzzerOpensAt) {
+    buzzerContent = `<div class="player-message message-wait"><span>◷</span><strong>Siap-siap!</strong><p>Tombol buzzer akan aktif serentak.</p></div>`;
   } else {
     buzzerContent = `<button class="buzzer-button" type="button" data-action="buzz" data-team="${selectedTeam.id}"><span>BUZZ!</span><small>TEKAN SEKALI</small></button><p class="buzzer-help">Pastikan perangkat Anda sudah siap.</p>`;
   }
@@ -376,6 +383,7 @@ function render() {
     else if (page === "quiz") renderQuiz(state);
     else if (page === "player") renderPlayer(state);
     else renderHome(state);
+    scheduleBuzzerStart(state);
     renderBackendStatus(getBackendSyncStatus());
   } catch (error) {
     app.innerHTML = `
@@ -386,6 +394,18 @@ function render() {
         <button class="button button-primary" type="button" data-action="recover-storage">Buat ulang data lokal</button>
       </main>
     `;
+  }
+}
+
+function scheduleBuzzerStart(state) {
+  clearTimeout(buzzerStartTimer);
+  buzzerStartTimer = undefined;
+  if (page !== "player" || !state.rebuttalOpen || state.buzzerTeamId || !Number.isFinite(state.buzzerOpensAt)) {
+    return;
+  }
+  const delay = state.buzzerOpensAt - getServerTime();
+  if (delay > 0) {
+    buzzerStartTimer = setTimeout(render, delay + 1);
   }
 }
 

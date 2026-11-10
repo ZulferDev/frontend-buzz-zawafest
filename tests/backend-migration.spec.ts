@@ -96,9 +96,20 @@ test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and p
 
     await admin.getByRole("button", { name: "Buka rebutan" }).click();
     const buzzButton = { name: /BUZZ/ };
+    await expect.poll(async () => {
+      const snapshot = await (await fetch(`${backendUrl}/api/state`)).json();
+      return snapshot.state.buzzerOpensAt;
+    }).toBeGreaterThan(Date.now() + 1000);
+    await expect(redPlayer.getByRole("button", buzzButton)).toBeHidden();
+    await expect(bluePlayer.getByRole("button", buzzButton)).toBeHidden();
+    const buttonReadyAt = await Promise.all([
+      redPlayer.getByRole("button", buzzButton).waitFor().then(() => redPlayer.evaluate(() => Date.now())),
+      bluePlayer.getByRole("button", buzzButton).waitFor().then(() => bluePlayer.evaluate(() => Date.now())),
+    ]);
+    expect(Math.abs(buttonReadyAt[0] - buttonReadyAt[1])).toBeLessThan(750);
     await Promise.all([
-      redPlayer.getByRole("button", buzzButton).waitFor(),
-      bluePlayer.getByRole("button", buzzButton).waitFor(),
+      expect(redPlayer.getByRole("button", buzzButton)).toBeEnabled(),
+      expect(bluePlayer.getByRole("button", buzzButton)).toBeEnabled(),
     ]);
     expect(redPlayerNavigations).toBe(1);
     expect(bluePlayerNavigations).toBe(1);

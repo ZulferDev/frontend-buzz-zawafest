@@ -80,7 +80,9 @@ Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
   dan mereset seluruh data.
 - Papan skor dan status kuis diperbarui melalui polling REST; tombol buzzer
   muncul di semua halaman peserta saat babak dibuka. Klaim buzzer diproses
-  secara atomik di backend agar hanya satu tim yang menang.
+  secara atomik di backend agar hanya satu tim yang menang. Waktu tombol aktif
+  dijadwalkan oleh server dan disinkronkan ke jam tiap browser untuk mengurangi
+  perbedaan waktu polling antar peserta.
 
 Data contoh generik dibuat saat aplikasi pertama kali dibuka dan state lama dari
 `lcc-local-state-v1` dimigrasikan satu kali ke backend saat tersambung. Sesudah

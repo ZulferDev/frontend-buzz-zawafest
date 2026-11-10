@@ -53,11 +53,14 @@ export function createStateStore(filename = ":memory:") {
     return { revision: row.revision, state: JSON.parse(row.state_json) };
   }
 
-  function replace(state, expectedRevision) {
+  function replace(state, expectedRevision, buzzerStartDelayMs = 0) {
     const issues = validateState(state);
     if (issues.length) throw new StateValidationError(issues);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
       throw new StateValidationError(["expectedRevision harus berupa bilangan bulat nol atau lebih."]);
+    }
+    if (!Number.isSafeInteger(buzzerStartDelayMs) || buzzerStartDelayMs < 0) {
+      throw new StateValidationError(["buzzerStartDelayMs harus berupa bilangan bulat nol atau lebih."]);
     }
 
     return database.transaction(() => {
@@ -65,6 +68,17 @@ export function createStateStore(filename = ":memory:") {
       if (current.revision !== expectedRevision) throw new RevisionConflictError(current);
 
       const next = structuredClone(state);
+      if (!next.rebuttalOpen) {
+        next.buzzerOpensAt = null;
+      } else if (
+        !current.state.rebuttalOpen
+        || current.state.buzzerTeamId !== null
+        || !Number.isFinite(current.state.buzzerOpensAt)
+      ) {
+        next.buzzerOpensAt = Date.now() + buzzerStartDelayMs;
+      } else {
+        next.buzzerOpensAt = current.state.buzzerOpensAt;
+      }
       next.updatedAt = Date.now();
       const revision = current.revision + 1;
       updateRow.run(revision, JSON.stringify(next), next.updatedAt);
@@ -80,7 +94,12 @@ export function createStateStore(filename = ":memory:") {
     return database.transaction(() => {
       const current = read();
       const teamExists = current.state.teams.some((team) => team.id === teamId);
-      if (!current.state.rebuttalOpen || current.state.buzzerTeamId || !teamExists) {
+      if (
+        !current.state.rebuttalOpen
+        || current.state.buzzerTeamId
+        || !teamExists
+        || (Number.isFinite(current.state.buzzerOpensAt) && Date.now() < current.state.buzzerOpensAt)
+      ) {
         return { accepted: false, ...current };
       }
 

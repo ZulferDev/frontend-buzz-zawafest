@@ -6,7 +6,7 @@ import { createEmptyState } from "../src/state.js";
 
 function setup() {
   const store = createStateStore();
-  return { app: createApp({ store }), store };
+  return { app: createApp({ store, buzzerStartDelayMs: 0 }), store };
 }
 
 function stateWithTeams() {
@@ -93,7 +93,7 @@ test("mengunci hanya satu buzzer dan memilih klaim pertama yang diterima server"
 
 test("mendeduplikasi spam per tim selama jendela dan menerima klaim pesaing yang lebih dulu server", async () => {
   const store = createStateStore();
-  const app = createApp({ store });
+  const app = createApp({ store, buzzerStartDelayMs: 0 });
   const saved = await app.request("/api/state", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -179,6 +179,36 @@ test("mendukung polling state berbasis revision tanpa mengirim snapshot yang bel
   store.close();
 });
 
+test("menetapkan satu waktu pembukaan server dan menolak klaim buzzer yang terlalu awal", async () => {
+  const store = createStateStore();
+  const app = createApp({ store, buzzerStartDelayMs: 100, buzzerClaimWindowMs: 0 });
+  const opened = await app.request("/api/state", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state: stateWithTeams(), expectedRevision: 0 }),
+  });
+  const openingSnapshot = await opened.json();
+  assert.ok(openingSnapshot.state.buzzerOpensAt >= Date.now() + 50);
+  assert.ok(opened.headers.has("x-server-time"));
+
+  const earlyClaim = await app.request("/api/buzzer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ teamId: "team-1" }),
+  });
+  assert.equal((await earlyClaim.json()).accepted, false);
+  assert.equal(store.read().revision, openingSnapshot.revision);
+
+  await new Promise((resolve) => setTimeout(resolve, openingSnapshot.state.buzzerOpensAt - Date.now() + 5));
+  const onTimeClaim = await app.request("/api/buzzer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ teamId: "team-1" }),
+  });
+  assert.equal((await onTimeClaim.json()).accepted, true);
+  store.close();
+});
+
 test("mengizinkan origin IP privat frontend dan menolak IP publik otomatis", async () => {
   const store = createStateStore();
   const app = createApp({ store });
@@ -187,6 +217,9 @@ test("mengizinkan origin IP privat frontend dan menolak IP publik otomatis", asy
     headers: { Origin: "http://192.168.1.42:5173" },
   });
   assert.equal(allowed.headers.get("access-control-allow-origin"), "http://192.168.1.42:5173");
+  assert.match(allowed.headers.get("access-control-expose-headers") ?? "", /X-Server-Time/i);
+  assert.ok(allowed.headers.has("x-server-time"));
+  assert.ok(Number.isFinite(Number(allowed.headers.get("x-server-time"))));
 
   const loopback = await app.request("/api/state", {
     headers: { Origin: "http://[::1]:5173" },

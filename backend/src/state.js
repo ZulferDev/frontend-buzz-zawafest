@@ -5,6 +5,7 @@ export function createEmptyState() {
     questions: [],
     currentQuestionId: null,
     rebuttalOpen: false,
+    buzzerOpensAt: null,
     buzzerTeamId: null,
     screen: "question",
     updatedAt: Date.now(),
@@ -25,6 +26,9 @@ export function validateState(state) {
   }
   if (typeof state.rebuttalOpen !== "boolean") {
     issues.push("rebuttalOpen harus berupa boolean.");
+  }
+  if (state.buzzerOpensAt !== undefined && state.buzzerOpensAt !== null && !Number.isFinite(state.buzzerOpensAt)) {
+    issues.push("buzzerOpensAt harus berupa angka atau null.");
   }
   if (state.screen !== "question" && state.screen !== "standby") {
     issues.push("screen harus bernilai question atau standby.");
