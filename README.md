@@ -3,14 +3,41 @@
 Aplikasi Lomba Cerdas Cermat berbasis Vite dengan slogan “Smart Generation
 Empower Ummah”. Beranda difokuskan untuk peserta. State kuis tetap dicache di
 `localStorage`, lalu disinkronkan dengan backend SQLite melalui REST dan
-WebSocket agar panel admin, layar kuis, dan peserta dapat berbagi pembaruan
-lintas tab maupun perangkat.
+polling revision setiap 250 ms agar panel admin, layar kuis, dan peserta dapat
+berbagi pembaruan lintas tab maupun perangkat tanpa memuat ulang halaman.
 
 ## Menjalankan
 
+### Termux: satu bundel frontend + backend
+
+Salin atau clone folder proyek ini ke perangkat Android. Di Termux, pasang
+toolchain SQLite lalu install seluruh dependency dari root proyek:
+
 ```sh
+pkg update
+pkg install nodejs-lts python make clang
 npm install
 npm run dev
+```
+
+Perintah tunggal tersebut menjalankan backend dan Vite pada `0.0.0.0`:
+backend di port `3000`, frontend di port `5173`. Buka `http://localhost:5173`
+di perangkat yang sama, atau `http://<IP-LAN-ponsel>:5173` dari perangkat lain.
+Frontend otomatis memakai hostname yang sama untuk backend; tidak perlu
+mengatur IP atau CORS secara manual. Perubahan frontend memakai Vite HMR dan
+backend otomatis dimulai ulang saat file sumber berubah. Data SQLite disimpan
+di `backend/data/zawa.sqlite`.
+
+Untuk memakai port berbeda, jalankan dengan `PORT=<port-backend>` dan
+`FRONTEND_PORT=<port-frontend>`. Untuk jaringan selain localhost/LAN, gunakan
+`FRONTEND_ORIGINS` berisi origin frontend yang diizinkan, dipisahkan koma.
+Jangan mengekspos server tanpa autentikasi ke jaringan yang tidak tepercaya.
+
+### Menjalankan frontend saja
+
+```sh
+npm install
+npm run dev:frontend
 ```
 
 Buka alamat lokal Vite. Rute yang tersedia:
@@ -20,11 +47,10 @@ Buka alamat lokal Vite. Rute yang tersedia:
 - `/quiz` — layar skor dan pertanyaan
 - `/player` — pemilihan tim dan buzzer
 
-Backend Hono dijalankan terpisah di `/workspaces/backend-buzz-zawafest` dengan
-`npm install && npm run dev`. Frontend mencoba `http://localhost:3000/api`
-secara default dan tetap memakai penyimpanan lokal saat backend offline. Untuk
-server lain, atur `VITE_API_URL` sebelum menjalankan Vite atau membuat build.
-Detail endpoint dan konfigurasi tersedia di README backend.
+Frontend mencoba backend pada hostname yang sama dengan port `3000` secara
+default dan tetap memakai penyimpanan lokal saat backend offline. Untuk server
+lain, atur `VITE_API_URL` sebelum menjalankan Vite atau membuat build. Detail
+endpoint dan konfigurasi tersedia di [README backend](./backend/README.md).
 
 ## Pengujian end-to-end
 
@@ -33,8 +59,10 @@ npm run test:e2e
 ```
 
 Tes ini menjalankan backend dan frontend pada port khusus serta memakai database
-SQLite sementara. Jalankan dari direktori frontend; backend harus tersedia di
-`../backend-buzz-zawafest`.
+SQLite sementara. Cakupannya termasuk satu pemenang saat klaim bersamaan,
+permintaan klaim yang tertunda di jaringan, dan burst 12 klik duplikat. Tes
+latensi mencerminkan urutan kedatangan di backend; aplikasi tidak mengoreksi
+niat waktu klik lintas koneksi yang berbeda.
 
 Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
 `localhost:5173`, gunakan `npm run test:e2e:dev`. Screenshot tersimpan di
@@ -50,7 +78,8 @@ Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
   Teks Soal, Jawaban, dan Poin.
 - Membuka/menutup babak rebutan, mengatur tampilan standby, mereset buzzer,
   dan mereset seluruh data.
-- Papan skor dan status kuis didorong melalui WebSocket; klaim buzzer diproses
+- Papan skor dan status kuis diperbarui melalui polling REST; tombol buzzer
+  muncul di semua halaman peserta saat babak dibuka. Klaim buzzer diproses
   secara atomik di backend agar hanya satu tim yang menang.
 
 Data contoh generik dibuat saat aplikasi pertama kali dibuka dan state lama dari

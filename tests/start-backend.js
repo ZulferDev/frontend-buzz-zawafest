@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databasePath = resolve(tmpdir(), `zawa-e2e-${process.pid}.sqlite`);
-const backendEntry = resolve(frontendRoot, "..", "backend-buzz-zawafest", "src", "server.js");
+const backendEntry = resolve(frontendRoot, "backend", "src", "server.js");
 
 function removeTestDatabase() {
   for (const suffix of ["", "-shm", "-wal"]) {

@@ -45,6 +45,18 @@ test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and p
   const bluePlayerContext = await browser.newContext();
   const bluePlayer = await bluePlayerContext.newPage();
   bluePlayer.on("pageerror", (error) => errors.push(`blue player: ${error.message}`));
+  const playerWebSockets: string[] = [];
+  let redPlayerNavigations = 0;
+  let bluePlayerNavigations = 0;
+  for (const player of [redPlayer, bluePlayer]) {
+    player.on("websocket", (websocket) => playerWebSockets.push(websocket.url()));
+  }
+  redPlayer.on("framenavigated", (frame) => {
+    if (frame === redPlayer.mainFrame()) redPlayerNavigations += 1;
+  });
+  bluePlayer.on("framenavigated", (frame) => {
+    if (frame === bluePlayer.mainFrame()) bluePlayerNavigations += 1;
+  });
 
   try {
     await admin.goto(`${frontendUrl}/admin`);
@@ -88,6 +100,9 @@ test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and p
       redPlayer.getByRole("button", buzzButton).waitFor(),
       bluePlayer.getByRole("button", buzzButton).waitFor(),
     ]);
+    expect(redPlayerNavigations).toBe(1);
+    expect(bluePlayerNavigations).toBe(1);
+    expect(playerWebSockets.filter((url) => url.includes(new URL(backendUrl).host))).toEqual([]);
     await Promise.all([
       redPlayer.getByRole("button", buzzButton).click(),
       bluePlayer.getByRole("button", buzzButton).click(),

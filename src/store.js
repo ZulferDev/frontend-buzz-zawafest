@@ -1,8 +1,11 @@
 const LEGACY_STORAGE_KEY = "lcc-local-state-v1";
 const CACHE_STORAGE_KEY = "lcc-backend-cache-v1";
 const CHANGE_EVENT = "lcc-local-state-change";
-const BACKEND_URL = (import.meta.env?.VITE_API_URL || "http://localhost:3000/api").replace(/\/+$/, "");
+const defaultBackendUrl = new URL("/api", window.location.origin);
+defaultBackendUrl.port = import.meta.env?.VITE_API_PORT || "3000";
+const BACKEND_URL = (import.meta.env?.VITE_API_URL || defaultBackendUrl.toString()).replace(/\/+$/, "");
 const RECONNECT_DELAY = 3000;
+const POLL_INTERVAL = 250;
 
 let localGeneration = 0;
 let backendRevision = -1;
@@ -10,8 +13,9 @@ let backendState = null;
 let backendReady = false;
 let syncBlocked = false;
 let connecting = false;
-let socket;
 let reconnectTimer;
+let pollTimer;
+let pollInFlight = false;
 let mutationQueue = [];
 const statusListeners = new Set();
 let backendStatus = { state: "connecting", message: "Menghubungkan ke server..." };
@@ -214,6 +218,7 @@ export function getBackendSyncStatus() {
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
+    cache: "no-store",
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
@@ -242,11 +247,8 @@ function acceptSnapshot(snapshot, applyLocally) {
 
 function markOffline(error) {
   backendReady = false;
-  if (socket) {
-    socket.onclose = null;
-    socket.close();
-    socket = null;
-  }
+  clearTimeout(pollTimer);
+  pollTimer = null;
   console.error("[sync] Backend tidak tersedia; perubahan tetap disimpan lokal.", error);
   setBackendStatus("offline", "LOKAL · BACKEND OFFLINE");
   scheduleReconnect();
@@ -288,7 +290,7 @@ async function initializeBackend() {
     }
     backendReady = true;
     setBackendStatus("live", "LIVE · TERSINKRON");
-    connectWebSocket();
+    schedulePoll(0);
     void flushMutationQueue();
   } catch (error) {
     markOffline(error);
@@ -297,37 +299,30 @@ async function initializeBackend() {
   }
 }
 
-function connectWebSocket() {
-  if (socket || !backendReady) return;
-  const url = new URL(`${BACKEND_URL}/ws`);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+function schedulePoll(delay = POLL_INTERVAL) {
+  if (!backendReady || pollTimer) return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void pollBackendState();
+  }, delay);
+}
+
+async function pollBackendState() {
+  if (!backendReady || pollInFlight) return;
+  pollInFlight = true;
   try {
-    socket = new WebSocket(url);
-  } catch (error) {
-    markOffline(error);
-    return;
-  }
-  socket.addEventListener("open", () => {
-    setBackendStatus("live", "LIVE · TERSINKRON");
-  });
-  socket.addEventListener("message", (event) => {
-    try {
-      const message = JSON.parse(event.data);
-      if (message.type !== "state" || message.revision <= backendRevision) return;
-      acceptSnapshot(message, true);
+    const snapshot = await requestJson(`${BACKEND_URL}/state?since=${backendRevision}`);
+    if (snapshot) {
+      acceptSnapshot(snapshot, true);
       setBackendStatus("live", "LIVE · TERSINKRON");
       void flushMutationQueue();
-    } catch (error) {
-      console.error("[sync] Pesan WebSocket tidak valid.", error);
     }
-  });
-  socket.addEventListener("close", () => {
-    if (socket) socket = null;
-    if (backendReady) markOffline(new Error("Koneksi WebSocket terputus."));
-  });
-  socket.addEventListener("error", () => {
-    if (backendReady) markOffline(new Error("Koneksi WebSocket gagal."));
-  });
+  } catch (error) {
+    markOffline(error);
+  } finally {
+    pollInFlight = false;
+    schedulePoll();
+  }
 }
 
 async function flushMutationQueue() {
