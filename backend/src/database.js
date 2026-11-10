@@ -50,7 +50,9 @@ export function createStateStore(filename = ":memory:") {
 
   function read() {
     const row = readRow.get();
-    return { revision: row.revision, state: JSON.parse(row.state_json) };
+    const state = JSON.parse(row.state_json);
+    state.buzzerTieTeamIds ??= [];
+    return { revision: row.revision, state };
   }
 
   function replace(state, expectedRevision, buzzerStartDelayMs = 0) {
@@ -68,16 +70,22 @@ export function createStateStore(filename = ":memory:") {
       if (current.revision !== expectedRevision) throw new RevisionConflictError(current);
 
       const next = structuredClone(state);
+      next.buzzerTieTeamIds ??= current.state.buzzerTieTeamIds;
       if (!next.rebuttalOpen) {
         next.buzzerOpensAt = null;
       } else if (
         !current.state.rebuttalOpen
         || current.state.buzzerTeamId !== null
+        || current.state.buzzerTieTeamIds.length > 0
         || !Number.isFinite(current.state.buzzerOpensAt)
       ) {
         next.buzzerOpensAt = Date.now() + buzzerStartDelayMs;
+        next.buzzerTeamId = null;
+        next.buzzerTieTeamIds = [];
       } else {
         next.buzzerOpensAt = current.state.buzzerOpensAt;
+        next.buzzerTeamId = current.state.buzzerTeamId;
+        next.buzzerTieTeamIds = current.state.buzzerTieTeamIds;
       }
       next.updatedAt = Date.now();
       const revision = current.revision + 1;
@@ -86,27 +94,36 @@ export function createStateStore(filename = ":memory:") {
     }).immediate();
   }
 
-  function claimBuzzer(teamId) {
-    if (typeof teamId !== "string" || !teamId.trim() || teamId.length > 128) {
-      throw new StateValidationError(["teamId harus berupa string yang tidak kosong."]);
+  function claimBuzzer(teamIds) {
+    if (!Array.isArray(teamIds) || teamIds.length === 0
+      || teamIds.some((teamId) => typeof teamId !== "string" || !teamId.trim() || teamId.length > 128)) {
+      throw new StateValidationError(["teamIds harus berisi ID tim yang valid."]);
     }
 
     return database.transaction(() => {
       const current = read();
-      const teamExists = current.state.teams.some((team) => team.id === teamId);
+      const uniqueTeamIds = [...new Set(teamIds)];
+      const knownTeamIds = new Set(current.state.teams.map((team) => team.id));
+      const acceptedTeamIds = uniqueTeamIds.filter((teamId) => knownTeamIds.has(teamId));
       if (
         !current.state.rebuttalOpen
         || current.state.buzzerTeamId
-        || !teamExists
+        || current.state.buzzerTieTeamIds.length > 0
+        || acceptedTeamIds.length === 0
         || (Number.isFinite(current.state.buzzerOpensAt) && Date.now() < current.state.buzzerOpensAt)
       ) {
-        return { accepted: false, ...current };
+        return { acceptedTeamIds: [], ...current };
       }
 
-      const next = { ...current.state, buzzerTeamId: teamId, updatedAt: Date.now() };
+      const next = {
+        ...current.state,
+        buzzerTeamId: acceptedTeamIds.length === 1 ? acceptedTeamIds[0] : null,
+        buzzerTieTeamIds: acceptedTeamIds.length > 1 ? acceptedTeamIds : [],
+        updatedAt: Date.now(),
+      };
       const revision = current.revision + 1;
       updateRow.run(revision, JSON.stringify(next), next.updatedAt);
-      return { accepted: true, revision, state: next };
+      return { acceptedTeamIds, revision, state: next };
     }).immediate();
   }
 

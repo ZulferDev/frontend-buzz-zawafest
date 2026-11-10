@@ -35,6 +35,7 @@ export function createEmptyState() {
     rebuttalOpen: false,
     buzzerOpensAt: null,
     buzzerTeamId: null,
+    buzzerTieTeamIds: [],
     screen: "question",
     updatedAt: Date.now(),
   };
@@ -158,34 +159,25 @@ export async function updateState(update) {
 }
 
 export async function claimBuzzer(teamId) {
-  if (backendReady) {
-    try {
-      const result = await requestJson(`${BACKEND_URL}/buzzer`, {
-        method: "POST",
-        body: JSON.stringify({ teamId }),
-      });
-      acceptSnapshot(result, true);
-      return result.accepted;
-    } catch (error) {
-      if (error.status && error.status < 500) {
-        setBackendStatus("error", "KLAIM BUZZER GAGAL");
-        throw error;
-      }
-      markOffline(error);
-    }
+  if (!backendReady) {
+    throw new Error("Buzzer tidak dapat diklaim saat koneksi server terputus. Tunggu hingga tersambung kembali.");
   }
 
-  const { state, generation } = await saveLocalUpdate((next) => {
-    if (next.rebuttalOpen && !next.buzzerTeamId && next.teams.some((team) => team.id === teamId)) {
-      next.buzzerTeamId = teamId;
+  try {
+    const result = await requestJson(`${BACKEND_URL}/buzzer`, {
+      method: "POST",
+      body: JSON.stringify({ teamId }),
+    });
+    acceptSnapshot(result, true);
+    return result.accepted;
+  } catch (error) {
+    if (error.status && error.status < 500) {
+      setBackendStatus("error", "KLAIM BUZZER GAGAL");
+      throw error;
     }
-  });
-  const accepted = state.buzzerTeamId === teamId;
-  if (accepted) {
-    mutationQueue.push({ type: "buzzer", teamId, generation });
-    void flushMutationQueue();
+    markOffline(error);
+    throw new Error("Koneksi terputus saat klaim buzzer dikirim. Hasil klaim belum dapat dipastikan.");
   }
-  return accepted;
 }
 
 export function subscribeToStateChanges(callback) {
@@ -347,16 +339,6 @@ async function flushMutationQueue() {
   try {
     while (backendReady && !syncBlocked && mutationQueue.length) {
       const mutation = mutationQueue[0];
-      if (mutation.type === "buzzer") {
-        const result = await requestJson(`${BACKEND_URL}/buzzer`, {
-          method: "POST",
-          body: JSON.stringify({ teamId: mutation.teamId }),
-        });
-        mutationQueue.shift();
-        acceptSnapshot(result, mutation.generation === localGeneration);
-        continue;
-      }
-
       const candidate = structuredClone(backendState);
       mutation.update(candidate);
       candidate.updatedAt = Date.now();

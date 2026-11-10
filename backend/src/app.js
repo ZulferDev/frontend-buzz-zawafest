@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { RevisionConflictError, StateValidationError } from "./database.js";
 
-const DEFAULT_BUZZER_CLAIM_WINDOW_MS = 150;
+const DEFAULT_BUZZER_CLAIM_WINDOW_MS = 250;
 const DEFAULT_BUZZER_START_DELAY_MS = 2000;
 
 function isPrivateIPv4(hostname) {
@@ -68,42 +68,29 @@ export function createApp({
     || isLocalFrontendOrigin(origin, frontendPort);
   const pendingBuzzerClaims = new Map();
   let buzzerClaimTimer;
-  let buzzerClaimSequence = 0;
 
   function flushBuzzerClaims() {
     buzzerClaimTimer = undefined;
-    const claims = [...pendingBuzzerClaims.values()]
-      .sort((left, right) => left.receivedAt - right.receivedAt || left.sequence - right.sequence);
+    const claims = [...pendingBuzzerClaims.values()];
     pendingBuzzerClaims.clear();
 
-    let winner;
-    let snapshot;
-    for (const claim of claims) {
-      try {
-        snapshot = store.claimBuzzer(claim.teamId);
-      } catch (error) {
-        if (error instanceof StateValidationError) {
-          for (const request of claim.requests) request.reject(error);
-          continue;
-        }
-        for (const pending of claims) {
-          for (const request of pending.requests) request.reject(error);
-        }
-        return;
+    let result;
+    try {
+      result = store.claimBuzzer(claims.map(({ teamId }) => teamId));
+    } catch (error) {
+      for (const claim of claims) {
+        for (const request of claim.requests) request.reject(error);
       }
-
-      if (snapshot.accepted) {
-        winner = claim;
-        break;
-      }
+      return;
     }
 
-    snapshot ??= store.read();
+    const acceptedTeamIds = new Set(result.acceptedTeamIds);
     for (const claim of claims) {
       for (const [index, request] of claim.requests.entries()) {
         request.resolve({
-          ...snapshot,
-          accepted: claim === winner && index === 0,
+          revision: result.revision,
+          state: result.state,
+          accepted: acceptedTeamIds.has(claim.teamId) && index === 0,
         });
       }
     }
@@ -115,8 +102,6 @@ export function createApp({
       if (!claim) {
         claim = {
           teamId,
-          receivedAt: performance.now(),
-          sequence: buzzerClaimSequence++,
           requests: [],
         };
         pendingBuzzerClaims.set(teamId, claim);
@@ -173,7 +158,6 @@ export function createApp({
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return context.json({ error: "invalid_json", message: "Body harus berupa objek JSON." }, 400);
     }
-
     try {
       const snapshot = store.replace(body.state, body.expectedRevision, buzzerStartDelayMs);
       return context.json(snapshot);
@@ -196,6 +180,12 @@ export function createApp({
     const body = await context.req.json().catch(() => null);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return context.json({ error: "invalid_json", message: "Body harus berupa objek JSON." }, 400);
+    }
+    if (typeof body.teamId !== "string" || !body.teamId.trim() || body.teamId.length > 128) {
+      return context.json({
+        error: "invalid_request",
+        message: "teamId harus berupa string yang tidak kosong.",
+      }, 422);
     }
     try {
       const result = await queueBuzzerClaim(body.teamId);

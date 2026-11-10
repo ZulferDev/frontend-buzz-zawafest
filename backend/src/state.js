@@ -7,6 +7,7 @@ export function createEmptyState() {
     rebuttalOpen: false,
     buzzerOpensAt: null,
     buzzerTeamId: null,
+    buzzerTieTeamIds: [],
     screen: "question",
     updatedAt: Date.now(),
   };
@@ -38,6 +39,12 @@ export function validateState(state) {
   }
   if (state.buzzerTeamId !== null && typeof state.buzzerTeamId !== "string") {
     issues.push("buzzerTeamId harus berupa string atau null.");
+  }
+  if (state.buzzerTieTeamIds !== undefined
+    && (!Array.isArray(state.buzzerTieTeamIds)
+      || state.buzzerTieTeamIds.length > 100
+      || state.buzzerTieTeamIds.some((teamId) => typeof teamId !== "string"))) {
+    issues.push("buzzerTieTeamIds harus berupa array ID tim.");
   }
   if (state.updatedAt !== undefined && !Number.isFinite(state.updatedAt)) {
     issues.push("updatedAt harus berupa angka.");
@@ -92,6 +99,9 @@ export function validateState(state) {
   }
   if (state.buzzerTeamId !== null && !teamIds.has(state.buzzerTeamId)) {
     issues.push("buzzerTeamId harus menunjuk ke tim yang tersedia.");
+  }
+  if (state.buzzerTieTeamIds?.some((teamId) => !teamIds.has(teamId))) {
+    issues.push("buzzerTieTeamIds harus menunjuk ke tim yang tersedia.");
   }
   if (Buffer.byteLength(JSON.stringify(state), "utf8") > 5 * 1024 * 1024) {
     issues.push("Ukuran total state melebihi 5 MB.");

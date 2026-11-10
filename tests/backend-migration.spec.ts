@@ -103,8 +103,10 @@ test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and p
     await expect(redPlayer.getByRole("button", buzzButton)).toBeHidden();
     await expect(bluePlayer.getByRole("button", buzzButton)).toBeHidden();
     const buttonReadyAt = await Promise.all([
-      redPlayer.getByRole("button", buzzButton).waitFor().then(() => redPlayer.evaluate(() => Date.now())),
-      bluePlayer.getByRole("button", buzzButton).waitFor().then(() => bluePlayer.evaluate(() => Date.now())),
+      expect(redPlayer.getByRole("button", buzzButton)).toBeVisible({ timeout: 15_000 })
+        .then(() => redPlayer.evaluate(() => Date.now())),
+      expect(bluePlayer.getByRole("button", buzzButton)).toBeVisible({ timeout: 15_000 })
+        .then(() => bluePlayer.evaluate(() => Date.now())),
     ]);
     expect(Math.abs(buttonReadyAt[0] - buttonReadyAt[1])).toBeLessThan(750);
     await Promise.all([
@@ -114,32 +116,26 @@ test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and p
     expect(redPlayerNavigations).toBe(1);
     expect(bluePlayerNavigations).toBe(1);
     expect(playerWebSockets.filter((url) => url.includes(new URL(backendUrl).host))).toEqual([]);
-    await Promise.all([
-      redPlayer.getByRole("button", buzzButton).click(),
-      bluePlayer.getByRole("button", buzzButton).click(),
-    ]);
+    const claims = await Promise.all(["legacy-red", "legacy-blue"].map((teamId) => fetch(`${backendUrl}/api/buzzer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teamId }),
+    })));
+    const claimResults = await Promise.all(claims.map((response) => response.json()));
+    expect(claimResults.every((result) => result.accepted)).toBe(true);
 
-    const winner = await Promise.race([
-      redPlayer.getByText("Kamu yang tercepat!").waitFor().then(() => redPlayer),
-      bluePlayer.getByText("Kamu yang tercepat!").waitFor().then(() => bluePlayer),
-    ]);
-    const loser = winner === redPlayer ? bluePlayer : redPlayer;
-    await expect(loser.getByText("Tim lain lebih dulu")).toBeVisible();
+    await expect(redPlayer.getByText("Klaim bersamaan!")).toBeVisible();
+    await expect(bluePlayer.getByText("Klaim bersamaan!")).toBeVisible();
     const finalState = await (await fetch(`${backendUrl}/api/state`)).json();
-    expect(finalState.state.buzzerTeamId).toBe(winner === redPlayer ? "legacy-red" : "legacy-blue");
-    await expect(quiz.getByText(/menekan buzzer!/)).toBeVisible();
-
-    const winnerName = winner === redPlayer ? "Tim Legacy Merah" : "Tim Legacy Biru";
-    const winnerScore = winner === redPlayer ? "30" : "25";
-    await admin.getByRole("button", { name: `Tambah 10 poin untuk ${winnerName}` }).click();
-    await expect(quiz.locator(".podium-card").filter({ hasText: winnerName }).locator(".podium-score")).toHaveText(winnerScore);
-    await expect(winner.locator(".player-score")).toContainText(winnerScore);
+    expect(finalState.state.buzzerTeamId).toBeNull();
+    expect([...finalState.state.buzzerTieTeamIds].sort()).toEqual(["legacy-blue", "legacy-red"]);
+    await expect(quiz.getByText(/Klaim bersamaan:/)).toBeVisible();
 
     await quiz.evaluate(() => localStorage.clear());
     await quiz.reload();
     await expect(quiz.locator("#sync-status").getByText("LIVE · TERSINKRON")).toBeVisible();
     await expect(quiz.getByText("Apakah data lama sudah berpindah?", { exact: true })).toBeVisible();
-    await expect(quiz.locator(".podium-card").filter({ hasText: winnerName }).locator(".podium-score")).toHaveText(winnerScore);
+    await expect(quiz.getByText(/Klaim bersamaan:/)).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await Promise.all([

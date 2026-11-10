@@ -59,10 +59,11 @@ npm run test:e2e
 ```
 
 Tes ini menjalankan backend dan frontend pada port khusus serta memakai database
-SQLite sementara. Cakupannya termasuk satu pemenang saat klaim bersamaan,
-permintaan klaim yang tertunda di jaringan, dan burst 12 klik duplikat. Tes
-latensi mencerminkan urutan kedatangan di backend; aplikasi tidak mengoreksi
-niat waktu klik lintas koneksi yang berbeda.
+SQLite sementara. Cakupannya termasuk klaim lintas tim yang jatuh dalam jendela
+adjudikasi 250 ms sebagai seri, klaim yang terlambat di jaringan, dan burst
+klik duplikat. Server tetap tidak dapat mengetahui waktu klik fisik yang
+sebenarnya dari browser, sehingga klaim yang melewati jendela tidak dapat
+dianggap bersamaan secara tepercaya.
 
 Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
 `localhost:5173`, gunakan `npm run test:e2e:dev`. Screenshot tersimpan di
@@ -79,10 +80,12 @@ Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
 - Membuka/menutup babak rebutan, mengatur tampilan standby, mereset buzzer,
   dan mereset seluruh data.
 - Papan skor dan status kuis diperbarui melalui polling REST; tombol buzzer
-  muncul di semua halaman peserta saat babak dibuka. Klaim buzzer diproses
-  secara atomik di backend agar hanya satu tim yang menang. Waktu tombol aktif
-  dijadwalkan oleh server dan disinkronkan ke jam tiap browser untuk mengurangi
-  perbedaan waktu polling antar peserta.
+  muncul di semua halaman peserta saat babak dibuka. Server menampung klaim
+  selama jendela adjudikasi 250 ms: klaim satu tim menang, sedangkan klaim dari
+  beberapa tim dalam jendela itu dinyatakan seri dan ditampilkan di layar kuis
+  serta peserta. Pembawa acara dapat mengumumkan soal tie-break lalu mereset
+  buzzer. Klaim hanya dapat dilakukan saat backend tersambung. Waktu tombol
+  aktif dijadwalkan server dan disinkronkan ke jam browser.
 
 Data contoh generik dibuat saat aplikasi pertama kali dibuka dan state lama dari
 `lcc-local-state-v1` dimigrasikan satu kali ke backend saat tersambung. Sesudah

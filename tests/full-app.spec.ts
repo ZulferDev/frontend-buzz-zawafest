@@ -191,20 +191,15 @@ test("covers the competition workflow across home, admin, quiz, and participant 
 
     await admin.getByRole("button", { name: "Buka rebutan" }).click();
     await Promise.all([
-      redPlayer.getByRole("button", { name: /BUZZ/ }).waitFor(),
-      bluePlayer.getByRole("button", { name: /BUZZ/ }).waitFor(),
+      expect(redPlayer.getByRole("button", { name: /BUZZ/ })).toBeVisible({ timeout: 15_000 }),
+      expect(bluePlayer.getByRole("button", { name: /BUZZ/ })).toBeVisible({ timeout: 15_000 }),
     ]);
     await quiz.screenshot({ path: join(evidenceDirectory, "04-quiz-rebutan-open.png"), fullPage: true });
-    await Promise.all([
-      redPlayer.locator('[data-action="buzz"]').evaluate((button: HTMLButtonElement) => button.click()),
-      bluePlayer.locator('[data-action="buzz"]').evaluate((button: HTMLButtonElement) => button.click()),
-    ]);
+    await redPlayer.getByRole("button", { name: /BUZZ/ }).click();
 
-    const winner = await Promise.race([
-      redPlayer.getByText("Kamu yang tercepat!").waitFor().then(() => redPlayer),
-      bluePlayer.getByText("Kamu yang tercepat!").waitFor().then(() => bluePlayer),
-    ]);
-    const loser = winner === redPlayer ? bluePlayer : redPlayer;
+    const winner = redPlayer;
+    const loser = bluePlayer;
+    await expect(winner.getByText("Kamu yang tercepat!")).toBeVisible();
     await expect(loser.getByText("Tim lain lebih dulu")).toBeVisible();
     await expect(quiz.getByText(/menekan buzzer!/)).toBeVisible();
     await winner.screenshot({ path: join(evidenceDirectory, "05-player-buzzer-winner.png"), fullPage: true });

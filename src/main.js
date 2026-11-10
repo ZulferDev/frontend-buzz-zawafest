@@ -186,6 +186,10 @@ function renderQuestionRows(state) {
 
 function renderAdmin(state) {
   const currentQuestion = getCurrentQuestion(state);
+  const tiedTeamIds = state.buzzerTieTeamIds ?? [];
+  const buzzerStatus = tiedTeamIds.length
+    ? `Seri: ${tiedTeamIds.map((id) => state.teams.find((team) => team.id === id)?.name || id).join(", ")}`
+    : state.teams.find((team) => team.id === state.buzzerTeamId)?.name || "Belum ada";
   const groups = [...new Set(state.questions.map((question) => question.group).filter(Boolean))].sort();
   const filteredCount = state.questions.filter((question) => !questionGroupFilter || question.group === questionGroupFilter).length;
   const tabs = [
@@ -205,7 +209,7 @@ function renderAdmin(state) {
         <div class="card-title-row"><div><div class="section-kicker">STATUS LANGSUNG</div><h2>Kendali kuis</h2></div><span class="sync-pill" id="admin-sync-status"><i></i> MENGHUBUNGKAN...</span></div>
         <div class="status-grid">
           <div class="status-cell status-question"><span>SOAL AKTIF</span><strong>${escapeHtml(currentQuestion?.text || "Belum ada soal dipilih")}</strong></div>
-          <div class="status-cell"><span>BUZZER</span><strong class="${state.buzzerTeamId ? "text-red" : "text-blue"}">${escapeHtml(state.teams.find((team) => team.id === state.buzzerTeamId)?.name || "Belum ada")}</strong></div>
+          <div class="status-cell"><span>BUZZER</span><strong class="${state.buzzerTeamId || tiedTeamIds.length ? "text-red" : "text-blue"}">${escapeHtml(buzzerStatus)}</strong></div>
           <div class="status-cell"><span>REBUTAN</span><strong class="${state.rebuttalOpen ? "text-green" : "text-muted"}">${state.rebuttalOpen ? "TERBUKA" : "TERTUTUP"}</strong></div>
           <div class="status-cell"><span>LAYAR</span><strong class="text-blue">${state.screen === "standby" ? "STANDBY" : "SOAL"}</strong></div>
         </div>
@@ -274,12 +278,19 @@ function renderAdmin(state) {
 function renderQuiz(state) {
   const question = getCurrentQuestion(state);
   const buzzedTeam = state.teams.find((team) => team.id === state.buzzerTeamId);
+  const tiedTeams = state.buzzerTieTeamIds ?? [];
   const rankedTeams = [...state.teams].sort((a, b) => b.score - a.score);
-  const alert = state.rebuttalOpen
-    ? buzzedTeam
-      ? `<div class="quiz-alert alert-hit"><span class="alert-icon">ϟ</span><strong>${escapeHtml(buzzedTeam.name)} menekan buzzer!</strong></div>`
-      : `<div class="quiz-alert alert-open"><span class="alert-icon">ϟ</span><strong>Rebutan dibuka</strong><span>Tekan tombol tim Anda sekarang</span></div>`
-    : `<div class="quiz-alert alert-wait"><span class="alert-icon">◷</span><strong>Babak rebutan belum dibuka</strong></div>`;
+  let alert;
+  if (!state.rebuttalOpen) {
+    alert = `<div class="quiz-alert alert-wait"><span class="alert-icon">◷</span><strong>Babak rebutan belum dibuka</strong></div>`;
+  } else if (tiedTeams.length) {
+    const teamNames = tiedTeams.map((id) => state.teams.find((team) => team.id === id)?.name || id).join(", ");
+    alert = `<div class="quiz-alert alert-hit"><span class="alert-icon">ϟ</span><strong>Klaim bersamaan: ${escapeHtml(teamNames)}</strong><span>Babak seri — gunakan soal tie-break.</span></div>`;
+  } else if (buzzedTeam) {
+    alert = `<div class="quiz-alert alert-hit"><span class="alert-icon">ϟ</span><strong>${escapeHtml(buzzedTeam.name)} menekan buzzer!</strong></div>`;
+  } else {
+    alert = `<div class="quiz-alert alert-open"><span class="alert-icon">ϟ</span><strong>Rebutan dibuka</strong><span>Tekan tombol tim Anda sekarang</span></div>`;
+  }
 
   if (lastBuzzId !== state.buzzerTeamId && state.buzzerTeamId) {
     lastBuzzId = state.buzzerTeamId;
@@ -294,7 +305,7 @@ function renderQuiz(state) {
       ${rankedTeams.length ? `
         <section class="podium-grid" aria-label="Skor tim">
           ${rankedTeams.map((team, index) => `
-            <article class="podium-card ${team.id === state.buzzerTeamId ? "is-buzzed" : ""} ${index === 0 ? "is-leader" : ""}">
+            <article class="podium-card ${team.id === state.buzzerTeamId || tiedTeams.includes(team.id) ? "is-buzzed" : ""} ${index === 0 ? "is-leader" : ""}">
               <span class="podium-place">${String(index + 1).padStart(2, "0")}</span>
               <div class="podium-name">${escapeHtml(team.name)}</div>
               <strong class="podium-score">${formatScore(team.score)}</strong>
@@ -346,6 +357,7 @@ function renderPlayer(state) {
 
   const hasBuzzed = state.buzzerTeamId === selectedTeam.id;
   const otherBuzzed = state.buzzerTeamId && !hasBuzzed;
+  const buzzerTieTeamIds = state.buzzerTieTeamIds ?? [];
   const buzzerOpensAt = state.buzzerOpensAt;
   let buzzerContent;
   if (!state.rebuttalOpen) {
@@ -354,6 +366,9 @@ function renderPlayer(state) {
     buzzerContent = `<div class="player-message message-win"><span>✓</span><strong>Kamu yang tercepat!</strong><p>Tunggu arahan dari pembawa acara.</p></div>`;
   } else if (otherBuzzed) {
     buzzerContent = `<div class="player-message message-lost"><span>ϟ</span><strong>Tim lain lebih dulu</strong><p>Babak ini sudah dikunci.</p></div>`;
+  } else if (buzzerTieTeamIds.length) {
+    const teamWasTied = buzzerTieTeamIds.includes(selectedTeam.id);
+    buzzerContent = `<div class="player-message message-wait"><span>ϟ</span><strong>${teamWasTied ? "Klaim bersamaan!" : "Babak berakhir seri"}</strong><p>${teamWasTied ? "Klaimmu masuk dalam jendela seri. Tunggu soal tie-break dari pembawa acara." : "Beberapa klaim tiba hampir bersamaan. Tunggu soal tie-break dari pembawa acara."}</p></div>`;
   } else if (!Number.isFinite(buzzerOpensAt)) {
     buzzerContent = `<div class="player-message message-wait"><span>◷</span><strong>Menyiapkan babak</strong><p>Menyinkronkan waktu mulai bersama...</p></div>`;
   } else if (getServerTime() < buzzerOpensAt) {
@@ -400,12 +415,13 @@ function render() {
 function scheduleBuzzerStart(state) {
   clearTimeout(buzzerStartTimer);
   buzzerStartTimer = undefined;
-  if (page !== "player" || !state.rebuttalOpen || state.buzzerTeamId || !Number.isFinite(state.buzzerOpensAt)) {
+  if (page !== "player" || !state.rebuttalOpen || state.buzzerTeamId
+    || state.buzzerTieTeamIds?.length || !Number.isFinite(state.buzzerOpensAt)) {
     return;
   }
   const delay = state.buzzerOpensAt - getServerTime();
   if (delay > 0) {
-    buzzerStartTimer = setTimeout(render, delay + 1);
+    buzzerStartTimer = setTimeout(render, Math.min(delay + 1, 250));
   }
 }
 
@@ -628,6 +644,7 @@ async function handleClick(event) {
       await updateState((state) => {
         state.teams = state.teams.filter((team) => team.id !== teamId);
         if (state.buzzerTeamId === teamId) state.buzzerTeamId = null;
+        state.buzzerTieTeamIds = (state.buzzerTieTeamIds ?? []).filter((id) => id !== teamId);
       });
       showToast("Tim berhasil dihapus.");
       return;
@@ -642,6 +659,7 @@ async function handleClick(event) {
           state.currentQuestionId = null;
           state.rebuttalOpen = false;
           state.buzzerTeamId = null;
+          state.buzzerTieTeamIds = [];
         }
       });
       showToast("Soal berhasil dihapus.");
@@ -654,6 +672,7 @@ async function handleClick(event) {
         state.currentQuestionId = questionId;
         state.rebuttalOpen = false;
         state.buzzerTeamId = null;
+        state.buzzerTieTeamIds = [];
         state.screen = "question";
       });
       playTone(760, 0.18);
@@ -664,7 +683,10 @@ async function handleClick(event) {
     if (action === "toggle-rebuttal") {
       await updateState((state) => {
         state.rebuttalOpen = !state.rebuttalOpen;
-        if (state.rebuttalOpen) state.buzzerTeamId = null;
+        if (state.rebuttalOpen) {
+          state.buzzerTeamId = null;
+          state.buzzerTieTeamIds = [];
+        }
       });
       showToast(readState().rebuttalOpen ? "Babak rebutan dibuka." : "Babak rebutan ditutup.");
       return;
@@ -673,6 +695,7 @@ async function handleClick(event) {
     if (action === "reset-buzzer") {
       await updateState((state) => {
         state.buzzerTeamId = null;
+        state.buzzerTieTeamIds = [];
       });
       showToast("Buzzer berhasil direset.");
       return;

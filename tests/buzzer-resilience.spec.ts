@@ -90,7 +90,7 @@ test("allows only one accepted claim when an earlier click is delayed in transit
   }
 });
 
-test("keeps the first accepted team when another team sends a bounded duplicate-click burst", async ({ browser }) => {
+test("deduplicates a bounded click burst and accepts a later single claim", async ({ browser }) => {
   const round = await openRound();
   const spamContext = await browser.newContext();
   const competitorContext = await browser.newContext();
@@ -122,19 +122,46 @@ test("keeps the first accepted team when another team sends a bounded duplicate-
         button.click();
       }
     });
+
     await expect.poll(() => requestCount).toBe(12);
-    await competitorPage.getByRole("button", { name: /BUZZ/ }).click();
-    await expect(competitorPage.getByText("Kamu yang tercepat!")).toBeVisible();
     releaseRequests();
-    await expect.poll(() => results.length).toBe(13);
-    await expect(page.getByText("Tim lain lebih dulu")).toBeVisible();
+    await expect(page.getByText("Kamu yang tercepat!")).toBeVisible();
+    const lateResponse = await fetch(`${backendUrl}/api/buzzer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teamId: "e2e-immediate" }),
+    });
+    const lateResult = await lateResponse.json();
+    expect(lateResult.accepted).toBe(false);
+    await expect(competitorPage.getByText("Tim lain lebih dulu")).toBeVisible();
+    await expect.poll(() => results.length).toBe(12);
 
     const finalSnapshot = await (await fetch(`${backendUrl}/api/state`)).json();
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(finalSnapshot.revision).toBe(round.revision + 1);
-    expect(finalSnapshot.state.buzzerTeamId).toBe("e2e-immediate");
+    expect(finalSnapshot.state.buzzerTeamId).toBe("e2e-spam");
   } finally {
     releaseRequests();
     await Promise.all([spamContext.close(), competitorContext.close()]);
+  }
+});
+
+test("does not save a buzzer claim locally when the backend is offline", async ({ browser }) => {
+  const round = await openRound();
+  const context = await browser.newContext();
+
+  try {
+    const page = await openPlayer(context, "e2e-delayed");
+    await page.route("**/api/buzzer", (route) => route.abort());
+    await page.getByRole("button", { name: /BUZZ/ }).click();
+    await expect(page.getByRole("status")).toContainText("Hasil klaim belum dapat dipastikan");
+    const cachedState = await page.evaluate(() => JSON.parse(localStorage.getItem("lcc-backend-cache-v1") ?? "null"));
+    expect(cachedState.buzzerTeamId).toBeNull();
+    expect(cachedState.buzzerTieTeamIds).toEqual([]);
+    const finalSnapshot = await (await fetch(`${backendUrl}/api/state`)).json();
+    expect(finalSnapshot.revision).toBe(round.revision);
+    expect(finalSnapshot.state.buzzerTeamId).toBeNull();
+  } finally {
+    await context.close();
   }
 });
