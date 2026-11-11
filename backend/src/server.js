@@ -5,7 +5,6 @@ import { createStateStore } from "./database.js";
 const port = Number(process.env.PORT ?? 3000);
 const frontendPort = Number(process.env.FRONTEND_PORT ?? 5173);
 const buzzerStartDelayMs = Number(process.env.BUZZER_START_DELAY_MS ?? 2000);
-const buzzerClaimWindowMs = Number(process.env.BUZZER_CLAIM_WINDOW_MS ?? 250);
 const databasePath = process.env.SQLITE_PATH ?? "./data/zawa.sqlite";
 const allowedOrigins = (process.env.FRONTEND_ORIGINS ?? "http://localhost:5173,http://127.0.0.1:5173")
   .split(",")
@@ -20,7 +19,7 @@ if (!Number.isInteger(frontendPort) || frontendPort < 1 || frontendPort > 65535)
 }
 
 const store = createStateStore(databasePath);
-const app = createApp({ store, allowedOrigins, frontendPort, buzzerStartDelayMs, buzzerClaimWindowMs });
+const app = createApp({ store, allowedOrigins, frontendPort, buzzerStartDelayMs });
 const host = process.env.HOST ?? "0.0.0.0";
 const server = serve({ fetch: app.fetch, port, hostname: host });
 

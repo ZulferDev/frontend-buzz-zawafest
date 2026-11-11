@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const backendRoot = resolve(root, "backend");
+const backendGoRoot = resolve(root, "backend-go");
 const backendPort = process.env.PORT || "3000";
 const frontendPort = process.env.FRONTEND_PORT || "5173";
 const environment = { ...process.env };
@@ -18,8 +18,8 @@ function stopChildren(signal = "SIGTERM") {
   }
 }
 
-function start(label, args, cwd, env) {
-  const child = spawn(process.execPath, args, {
+function start(label, command, args, cwd, env) {
+  const child = spawn(command, args, {
     cwd,
     env,
     stdio: "inherit",
@@ -43,13 +43,13 @@ function start(label, args, cwd, env) {
 process.once("SIGINT", () => stopChildren("SIGINT"));
 process.once("SIGTERM", () => stopChildren("SIGTERM"));
 
-start("backend", ["--watch", "src/server.js"], backendRoot, {
+start("backend", "go", ["run", "./cmd/server"], backendGoRoot, {
   ...environment,
   HOST: "0.0.0.0",
   PORT: backendPort,
   FRONTEND_PORT: frontendPort,
 });
-start("frontend", [
+start("frontend", process.execPath, [
   resolve(root, "node_modules/vite/bin/vite.js"),
   "--host",
   "0.0.0.0",

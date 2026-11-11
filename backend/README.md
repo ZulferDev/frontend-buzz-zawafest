@@ -1,4 +1,9 @@
-# ZAWA SMART COMPETITION backend
+# Backend Node.js legacy
+
+Backend Hono + SQLite ini dipertahankan untuk kompatibilitas dan pengujian
+REST. Jalur yang direkomendasikan untuk penggunaan baru adalah backend Go di
+[`../backend-go/README.md`](../backend-go/README.md); `npm run dev:backend:legacy`
+menjalankan server ini secara langsung.
 
 Backend Hono + SQLite yang menjadi bagian dari bundel frontend. Jalankan
 `npm install` dan `npm run dev` dari root proyek untuk menyalakan keduanya
@@ -12,7 +17,6 @@ sekaligus.
 | `HOST` | `127.0.0.1` | Alamat bind; runner gabungan mengatur `0.0.0.0` |
 | `FRONTEND_PORT` | `5173` | Port frontend yang origin IP/LAN-nya diizinkan |
 | `BUZZER_START_DELAY_MS` | `2000` | Waktu persiapan sebelum buzzer dibuka serentak |
-| `BUZZER_CLAIM_WINDOW_MS` | `250` | Jendela server untuk mengadili klaim hampir bersamaan; klaim tim berbeda dalam jendela menjadi seri |
 | `SQLITE_PATH` | `./data/zawa.sqlite` | Lokasi database |
 | `FRONTEND_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Origin tambahan yang diizinkan, dipisahkan koma |
 
@@ -30,9 +34,8 @@ membutuhkan pengaturan origin manual.
 - `PUT /api/state` — menyimpan state memakai `expectedRevision`; konflik
   mengembalikan HTTP 409 dan snapshot terbaru.
 - `GET /api/teams` dan `GET /api/questions` — membaca koleksi domain.
-- `POST /api/buzzer` — klaim buzzer dikumpulkan dalam jendela adjudikasi server;
-  klaim tim berbeda di dalam jendela yang sama menghasilkan seri, bukan
-  keunggulan berdasarkan selisih kecil waktu tempuh jaringan.
+- `POST /api/buzzer` — klaim buzzer; klaim valid pertama yang diterima server
+  mengunci pemenang dan klaim berikutnya ditolak.
 
 Saat babak dibuka atau buzzer direset, backend menetapkan `buzzerOpensAt`
 berdasarkan jam server dan mengirimkannya ke seluruh peserta. Klien menunggu
@@ -41,12 +44,10 @@ yang datang lebih awal. Penyelarasan ini mengurangi pengaruh fase polling dan
 perbedaan jam perangkat, tetapi latensi jaringan/perangkat tetap dapat
 menimbulkan selisih kecil yang tidak bisa dihilangkan sepenuhnya.
 
-Setelah tombol aktif, server menampung klaim selama `BUZZER_CLAIM_WINDOW_MS`
-(default 250 ms). Satu klaim menghasilkan pemenang; beberapa tim yang klaimnya
-tiba dalam jendela yang sama dinyatakan seri. Pembawa acara kemudian dapat
-mengumumkan soal tie-break dan mereset buzzer. Klaim baru setelah jendela
-ditutup tidak dapat mengubah hasil. Klaim memerlukan koneksi backend; saat
-offline tombol tidak menyimpan klaim lokal yang tidak dapat diurutkan adil.
+Klaim pertama yang diterima ketika ronde aktif langsung mengunci pemenang;
+klaim berikutnya ditolak. Timestamp dari klien bukan bukti waktu sentuhan
+fisik. Server ini tidak menyediakan WebSocket; gunakan backend Go untuk
+pengalaman real-time dan rekoneksi.
 
 Backend tidak menyediakan autentikasi admin. Jangan mengeksposnya ke jaringan
 yang tidak tepercaya tanpa menambahkan autentikasi dan HTTPS.

@@ -5,7 +5,6 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { RevisionConflictError, StateValidationError } from "./database.js";
 
-const DEFAULT_BUZZER_CLAIM_WINDOW_MS = 250;
 const DEFAULT_BUZZER_START_DELAY_MS = 2000;
 
 function isPrivateIPv4(hostname) {
@@ -49,7 +48,6 @@ export function createApp({
   allowedOrigins = [],
   frontendPort = 5173,
   buzzerStartDelayMs = DEFAULT_BUZZER_START_DELAY_MS,
-  buzzerClaimWindowMs = DEFAULT_BUZZER_CLAIM_WINDOW_MS,
 }) {
   if (!Number.isInteger(frontendPort) || frontendPort < 1 || frontendPort > 65535) {
     throw new Error("frontendPort harus berupa bilangan bulat antara 1 dan 65535.");
@@ -57,62 +55,11 @@ export function createApp({
   if (!Number.isSafeInteger(buzzerStartDelayMs) || buzzerStartDelayMs < 0 || buzzerStartDelayMs > 30_000) {
     throw new Error("buzzerStartDelayMs harus berupa bilangan bulat antara 0 dan 30000.");
   }
-  if (!Number.isInteger(buzzerClaimWindowMs) || buzzerClaimWindowMs < 0 || buzzerClaimWindowMs > 1000) {
-    throw new Error("buzzerClaimWindowMs harus berupa bilangan bulat antara 0 dan 1000.");
-  }
-
   const app = new Hono();
   const originAllowed = (origin) => !origin
     || allowedOrigins.includes("*")
     || allowedOrigins.includes(origin)
     || isLocalFrontendOrigin(origin, frontendPort);
-  const pendingBuzzerClaims = new Map();
-  let buzzerClaimTimer;
-
-  function flushBuzzerClaims() {
-    buzzerClaimTimer = undefined;
-    const claims = [...pendingBuzzerClaims.values()];
-    pendingBuzzerClaims.clear();
-
-    let result;
-    try {
-      result = store.claimBuzzer(claims.map(({ teamId }) => teamId));
-    } catch (error) {
-      for (const claim of claims) {
-        for (const request of claim.requests) request.reject(error);
-      }
-      return;
-    }
-
-    const acceptedTeamIds = new Set(result.acceptedTeamIds);
-    for (const claim of claims) {
-      for (const [index, request] of claim.requests.entries()) {
-        request.resolve({
-          revision: result.revision,
-          state: result.state,
-          accepted: acceptedTeamIds.has(claim.teamId) && index === 0,
-        });
-      }
-    }
-  }
-
-  function queueBuzzerClaim(teamId) {
-    return new Promise((resolve, reject) => {
-      let claim = pendingBuzzerClaims.get(teamId);
-      if (!claim) {
-        claim = {
-          teamId,
-          requests: [],
-        };
-        pendingBuzzerClaims.set(teamId, claim);
-      }
-      claim.requests.push({ resolve, reject });
-      if (!buzzerClaimTimer) {
-        buzzerClaimTimer = setTimeout(flushBuzzerClaims, buzzerClaimWindowMs);
-      }
-    });
-  }
-
   app.use("/api/*", cors({
     origin: (origin) => originAllowed(origin) ? origin : null,
     allowMethods: ["GET", "PUT", "POST", "OPTIONS"],
@@ -188,8 +135,12 @@ export function createApp({
       }, 422);
     }
     try {
-      const result = await queueBuzzerClaim(body.teamId);
-      return context.json(result);
+      const result = store.claimBuzzer([body.teamId]);
+      return context.json({
+        revision: result.revision,
+        state: result.state,
+        accepted: result.acceptedTeamIds[0] === body.teamId,
+      });
     } catch (error) {
       if (error instanceof StateValidationError) {
         return context.json({ error: "invalid_request", message: error.message, issues: error.issues }, 422);

@@ -5,7 +5,7 @@ const backendUrl = process.env.ZAWA_E2E_BACKEND_URL ?? "http://127.0.0.1:3310";
 const legacyStorageKey = "lcc-local-state-v1";
 const cacheStorageKey = "lcc-backend-cache-v1";
 
-test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and players", async ({ browser }) => {
+test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and players over WebSocket", async ({ browser }) => {
   const legacyState = {
     version: 1,
     teams: [
@@ -115,27 +115,29 @@ test("migrates legacy browser data to SQLite and synchronizes admin, quiz, and p
     ]);
     expect(redPlayerNavigations).toBe(1);
     expect(bluePlayerNavigations).toBe(1);
-    expect(playerWebSockets.filter((url) => url.includes(new URL(backendUrl).host))).toEqual([]);
+    expect(playerWebSockets.filter((url) => url.includes(new URL(backendUrl).host) && url.endsWith("/ws"))).toHaveLength(2);
     const claims = await Promise.all(["legacy-red", "legacy-blue"].map((teamId) => fetch(`${backendUrl}/api/buzzer`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ teamId }),
     })));
     const claimResults = await Promise.all(claims.map((response) => response.json()));
-    expect(claimResults.every((result) => result.accepted)).toBe(true);
-
-    await expect(redPlayer.getByText("Klaim bersamaan!")).toBeVisible();
-    await expect(bluePlayer.getByText("Klaim bersamaan!")).toBeVisible();
+    expect(claimResults.filter((result) => result.accepted)).toHaveLength(1);
     const finalState = await (await fetch(`${backendUrl}/api/state`)).json();
-    expect(finalState.state.buzzerTeamId).toBeNull();
-    expect([...finalState.state.buzzerTieTeamIds].sort()).toEqual(["legacy-blue", "legacy-red"]);
-    await expect(quiz.getByText(/Klaim bersamaan:/)).toBeVisible();
+    const winnerId = finalState.state.buzzerTeamId;
+    expect(["legacy-red", "legacy-blue"]).toContain(winnerId);
+    expect(finalState.state.buzzerTieTeamIds).toEqual([]);
+    const winnerPage = winnerId === "legacy-red" ? redPlayer : bluePlayer;
+    const loserPage = winnerId === "legacy-red" ? bluePlayer : redPlayer;
+    await expect(winnerPage.getByText("Kamu yang tercepat!")).toBeVisible();
+    await expect(loserPage.getByText("Tim lain lebih dulu")).toBeVisible();
+    await expect(quiz.getByText(/menekan buzzer!/)).toBeVisible();
 
     await quiz.evaluate(() => localStorage.clear());
     await quiz.reload();
     await expect(quiz.locator("#sync-status").getByText("LIVE · TERSINKRON")).toBeVisible();
     await expect(quiz.getByText("Apakah data lama sudah berpindah?", { exact: true })).toBeVisible();
-    await expect(quiz.getByText(/Klaim bersamaan:/)).toBeVisible();
+    await expect(quiz.getByText(/menekan buzzer!/)).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await Promise.all([

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const databasePath = resolve(tmpdir(), `zawa-e2e-${process.pid}.sqlite`);
-const backendEntry = resolve(frontendRoot, "backend", "src", "server.js");
+const backendRoot = resolve(frontendRoot, "backend-go");
 
 function removeTestDatabase() {
   for (const suffix of ["", "-shm", "-wal"]) {
@@ -22,13 +23,22 @@ process.env.FRONTEND_ORIGINS = "http://127.0.0.1:5174";
 
 process.once("exit", removeTestDatabase);
 
-await import(backendEntry);
+const backend = spawn("go", ["run", "./cmd/server"], {
+  cwd: backendRoot,
+  env: process.env,
+  stdio: "inherit",
+});
+
+backend.once("error", (error) => {
+  console.error("[backend] Go server gagal dijalankan:", error);
+  process.exitCode = 1;
+});
+backend.once("exit", (code, signal) => {
+  removeTestDatabase();
+  if (signal && !process.exitCode) process.exitCode = 1;
+  else if (code && !process.exitCode) process.exitCode = code;
+});
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    setTimeout(() => {
-      removeTestDatabase();
-      process.exit(0);
-    }, 1000);
-  });
+  process.once(signal, () => backend.kill(signal));
 }

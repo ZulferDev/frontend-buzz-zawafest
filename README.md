@@ -1,32 +1,31 @@
 # ZAWA SMART COMPETITION
 
-Aplikasi Lomba Cerdas Cermat berbasis Vite dengan slogan “Smart Generation
-Empower Ummah”. Beranda difokuskan untuk peserta. State kuis tetap dicache di
-`localStorage`, lalu disinkronkan dengan backend SQLite melalui REST dan
-polling revision setiap 250 ms agar panel admin, layar kuis, dan peserta dapat
-berbagi pembaruan lintas tab maupun perangkat tanpa memuat ulang halaman.
+Aplikasi Lomba Cerdas Cermat berbasis Vite dengan backend Go, Gorilla WebSocket,
+dan SQLite. REST tetap digunakan untuk perubahan state admin; WebSocket
+menyiarkan state, menyinkronkan jam tampilan, dan menangani klaim buzzer.
 
 ## Menjalankan
 
 ### Termux: satu bundel frontend + backend
 
-Salin atau clone folder proyek ini ke perangkat Android. Di Termux, pasang
-toolchain SQLite lalu install seluruh dependency dari root proyek:
+Salin atau clone folder proyek ini ke perangkat yang memiliki Node.js, Go, dan
+toolchain C yang diperlukan oleh SQLite. Di Termux, pasang toolchain yang
+sesuai lalu install dependency frontend dari root:
 
 ```sh
 pkg update
-pkg install nodejs-lts python make clang
+pkg install nodejs-lts golang python make clang
 npm install
 npm run dev
 ```
 
-Perintah tunggal tersebut menjalankan backend dan Vite pada `0.0.0.0`:
-backend di port `3000`, frontend di port `5173`. Buka `http://localhost:5173`
+Perintah tunggal tersebut menjalankan Go backend dan Vite pada `0.0.0.0`:
+backend HTTP/WebSocket di port `3000`, frontend di port `5173`. Buka `http://localhost:5173`
 di perangkat yang sama, atau `http://<IP-LAN-ponsel>:5173` dari perangkat lain.
 Frontend otomatis memakai hostname yang sama untuk backend; tidak perlu
-mengatur IP atau CORS secara manual. Perubahan frontend memakai Vite HMR dan
-backend otomatis dimulai ulang saat file sumber berubah. Data SQLite disimpan
-di `backend/data/zawa.sqlite`.
+mengatur IP atau CORS secara manual. Perubahan frontend memakai Vite HMR. Data
+SQLite disimpan di `backend/data/zawa.sqlite`, dan dapat dipakai langsung oleh
+backend Go maupun backend Node lama.
 
 Untuk memakai port berbeda, jalankan dengan `PORT=<port-backend>` dan
 `FRONTEND_PORT=<port-frontend>`. Untuk jaringan selain localhost/LAN, gunakan
@@ -50,7 +49,7 @@ Buka alamat lokal Vite. Rute yang tersedia:
 Frontend mencoba backend pada hostname yang sama dengan port `3000` secara
 default dan tetap memakai penyimpanan lokal saat backend offline. Untuk server
 lain, atur `VITE_API_URL` sebelum menjalankan Vite atau membuat build. Detail
-endpoint dan konfigurasi tersedia di [README backend](./backend/README.md).
+endpoint dan konfigurasi tersedia di [README backend Go](./backend-go/README.md).
 
 ## Pengujian end-to-end
 
@@ -58,12 +57,11 @@ endpoint dan konfigurasi tersedia di [README backend](./backend/README.md).
 npm run test:e2e
 ```
 
-Tes ini menjalankan backend dan frontend pada port khusus serta memakai database
-SQLite sementara. Cakupannya termasuk klaim lintas tim yang jatuh dalam jendela
-adjudikasi 250 ms sebagai seri, klaim yang terlambat di jaringan, dan burst
-klik duplikat. Server tetap tidak dapat mengetahui waktu klik fisik yang
-sebenarnya dari browser, sehingga klaim yang melewati jendela tidak dapat
-dianggap bersamaan secara tepercaya.
+Tes ini menjalankan backend Go dan frontend pada port khusus serta memakai
+database SQLite sementara. Cakupannya termasuk sinkronisasi dan distribusi
+WebSocket, lock pemenang, feedback klik instan, serta klaim yang tertunda di
+jaringan. Server menetapkan pemenang berdasarkan klaim valid pertama yang
+diproses; waktu klien tidak digunakan sebagai bukti urutan sentuhan fisik.
 
 Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
 `localhost:5173`, gunakan `npm run test:e2e:dev`. Screenshot tersimpan di
@@ -79,13 +77,12 @@ Untuk menguji server dev yang sudah berjalan di `localhost:3000` dan
   Teks Soal, Jawaban, dan Poin.
 - Membuka/menutup babak rebutan, mengatur tampilan standby, mereset buzzer,
   dan mereset seluruh data.
-- Papan skor dan status kuis diperbarui melalui polling REST; tombol buzzer
-  muncul di semua halaman peserta saat babak dibuka. Server menampung klaim
-  selama jendela adjudikasi 250 ms: klaim satu tim menang, sedangkan klaim dari
-  beberapa tim dalam jendela itu dinyatakan seri dan ditampilkan di layar kuis
-  serta peserta. Pembawa acara dapat mengumumkan soal tie-break lalu mereset
-  buzzer. Klaim hanya dapat dilakukan saat backend tersambung. Waktu tombol
-  aktif dijadwalkan server dan disinkronkan ke jam browser.
+- Papan skor, status kuis, dan hasil buzzer disiarkan lewat WebSocket. Server
+  menyimpan satu pemenang secara atomik; klik lokal langsung dikunci dan
+  menampilkan status terkirim sambil menunggu konfirmasi server. Jika koneksi
+  terputus, klien mencoba menyambung ulang dan kembali memakai polling HTTP
+  selama WebSocket belum tersambung. Kalibrasi jam menyelaraskan tampilan waktu
+  mulai ronde, bukan menentukan pemenang.
 
 Data contoh generik dibuat saat aplikasi pertama kali dibuka dan state lama dari
 `lcc-local-state-v1` dimigrasikan satu kali ke backend saat tersambung. Sesudah

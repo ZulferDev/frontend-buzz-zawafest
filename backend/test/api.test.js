@@ -4,9 +4,9 @@ import { createApp } from "../src/app.js";
 import { createStateStore } from "../src/database.js";
 import { createEmptyState } from "../src/state.js";
 
-function setup(buzzerClaimWindowMs = 250) {
+function setup() {
   const store = createStateStore();
-  return { app: createApp({ store, buzzerStartDelayMs: 0, buzzerClaimWindowMs }), store };
+  return { app: createApp({ store, buzzerStartDelayMs: 0 }), store };
 }
 
 function stateWithTeams() {
@@ -54,7 +54,7 @@ test("menyimpan state dan menolak revision yang sudah kedaluwarsa", async () => 
   store.close();
 });
 
-test("menganggap klaim berbeda dalam jendela adjudikasi sebagai seri", async () => {
+test("mengunci klaim pertama yang diterima server dan menolak klaim berikutnya", async () => {
   const { app, store } = setup();
   const saved = await app.request("/api/state", {
     method: "PUT",
@@ -68,20 +68,20 @@ test("menganggap klaim berbeda dalam jendela adjudikasi sebagai seri", async () 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ teamId: "team-1", clientTimestamp: 9999999999999 }),
   });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  const firstResponse = await firstClaim;
+  const firstResult = await firstResponse.json();
+  assert.equal(firstResult.accepted, true);
+
   const secondClaim = app.request("/api/buzzer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ teamId: "team-2", clientTimestamp: 1 }),
   });
-  const responses = await Promise.all([firstClaim, secondClaim]);
-  const results = await Promise.all(responses.map((response) => response.json()));
-  assert.equal(results.filter((result) => result.accepted).length, 2);
-  assert.equal(results[0].accepted, true);
-  assert.equal(results[1].accepted, true);
-  assert.equal(results[0].state.buzzerTeamId, null);
-  assert.deepEqual(results[0].state.buzzerTieTeamIds, ["team-1", "team-2"]);
-  assert.deepEqual(store.read().state.buzzerTieTeamIds, ["team-1", "team-2"]);
+  const secondResult = await (await secondClaim).json();
+  assert.equal(secondResult.accepted, false);
+  assert.equal(secondResult.state.buzzerTeamId, "team-1");
+  assert.deepEqual(secondResult.state.buzzerTieTeamIds, []);
+  assert.equal(store.read().state.buzzerTeamId, "team-1");
 
   const current = store.read();
   const invalid = await app.request("/api/state", {
@@ -93,21 +93,30 @@ test("menganggap klaim berbeda dalam jendela adjudikasi sebagai seri", async () 
   store.close();
 });
 
-test("membuka jendela baru setelah seri direset", async () => {
+test("membuka ronde baru setelah pemenang buzzer direset", async () => {
   const store = createStateStore();
-  const app = createApp({ store, buzzerStartDelayMs: 20, buzzerClaimWindowMs: 20 });
+  const app = createApp({ store, buzzerStartDelayMs: 20 });
   const opened = await app.request("/api/state", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ state: stateWithTeams(), expectedRevision: 0 }),
   });
-  await Promise.all(["team-1", "team-2"].map((teamId) => app.request("/api/buzzer", {
+  const openingSnapshot = await opened.json();
+  await new Promise((resolve) => setTimeout(resolve, openingSnapshot.state.buzzerOpensAt - Date.now() + 5));
+  const winnerResponse = await app.request("/api/buzzer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ teamId }),
-  })));
+    body: JSON.stringify({ teamId: "team-1" }),
+  });
+  assert.equal((await winnerResponse.json()).accepted, true);
+  const losingResponse = await app.request("/api/buzzer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ teamId: "team-2" }),
+  });
+  assert.equal((await losingResponse.json()).accepted, false);
   const tied = store.read();
-  assert.deepEqual(tied.state.buzzerTieTeamIds, ["team-1", "team-2"]);
+  assert.equal(tied.state.buzzerTeamId, "team-1");
 
   const reset = await app.request("/api/state", {
     method: "PUT",

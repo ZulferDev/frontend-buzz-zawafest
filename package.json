@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "node scripts/dev-termux.js",
     "dev:frontend": "vite --host 0.0.0.0 --port 5173",
-    "dev:backend": "npm run dev --workspace backend",
+    "dev:backend": "cd backend-go && go run ./cmd/server",
+    "dev:backend:legacy": "npm run dev --workspace backend",
     "build": "vite build",
+    "test:backend:go": "cd backend-go && go test ./...",
     "preview": "vite preview",
     "test:backend": "npm test --workspace backend",
     "test:e2e": "playwright test tests/backend-migration.spec.ts tests/buzzer-resilience.spec.ts tests/full-app.spec.ts --project=chromium --workers=1",

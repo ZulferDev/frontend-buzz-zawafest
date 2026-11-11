@@ -8,6 +8,14 @@ const RECONNECT_DELAY = 3000;
 const POLL_INTERVAL = 250;
 let serverClockOffset = 0;
 let bestClockSyncRtt = Infinity;
+let serverClockAnchor = null;
+let backendSocket;
+let socketReconnectTimer;
+let socketReconnectDelay = 500;
+let socketHeartbeat;
+let syncRequestId = 0;
+const pendingSyncs = new Map();
+const pendingClaims = new Map();
 
 let localGeneration = 0;
 let backendRevision = -1;
@@ -163,6 +171,32 @@ export async function claimBuzzer(teamId) {
     throw new Error("Buzzer tidak dapat diklaim saat koneksi server terputus. Tunggu hingga tersambung kembali.");
   }
 
+  if (backendSocket?.readyState === WebSocket.OPEN) {
+    return new Promise((resolve, reject) => {
+      const requestId = `buzz-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const clientTimestamp = getServerTime();
+      const timeout = setTimeout(() => {
+        pendingClaims.delete(requestId);
+        reject(new Error("Respons klaim tidak diterima. Hasil klaim belum dapat dipastikan."));
+      }, 7000);
+      pendingClaims.set(requestId, { resolve, reject, timeout });
+      try {
+        backendSocket.send(JSON.stringify({
+          type: "BUZZ",
+          requestId,
+          clientId: teamId,
+          clientTimestamp,
+          clientNormalizedTimestamp: clientTimestamp,
+        }));
+      } catch (error) {
+        clearTimeout(timeout);
+        pendingClaims.delete(requestId);
+        markOffline(error);
+        reject(new Error("Koneksi terputus saat klaim buzzer dikirim. Hasil klaim belum dapat dipastikan."));
+      }
+    });
+  }
+
   try {
     const result = await requestJson(`${BACKEND_URL}/buzzer`, {
       method: "POST",
@@ -211,11 +245,42 @@ export function getBackendSyncStatus() {
 }
 
 export function getServerTime() {
+  if (serverClockAnchor) {
+    return serverClockAnchor.serverTime + (performance.now() - serverClockAnchor.monotonicTime);
+  }
   return Date.now() + serverClockOffset;
+}
+
+export function calibrateClock() {
+  if (backendSocket?.readyState !== WebSocket.OPEN) return false;
+  const socket = backendSocket;
+  const requestId = `sync-${++syncRequestId}`;
+  const sample = { wallTime: Date.now(), monotonicTime: performance.now() };
+  sample.timeout = setTimeout(() => {
+    if (!pendingSyncs.delete(requestId)) return;
+    if (backendSocket === socket && socket.readyState === WebSocket.OPEN) socket.close();
+  }, 5000);
+  pendingSyncs.set(requestId, sample);
+  try {
+    socket.send(JSON.stringify({
+      type: "SYNC_TIME",
+      requestId,
+      clientTime: sample.wallTime,
+      clientMonotonic: sample.monotonicTime,
+    }));
+  } catch (error) {
+    clearTimeout(sample.timeout);
+    pendingSyncs.delete(requestId);
+    console.error("[sync] Kalibrasi jam gagal dikirim.", error);
+    socket.close();
+    return false;
+  }
+  return true;
 }
 
 async function requestJson(url, options = {}) {
   const requestStartedAt = Date.now();
+  const requestStartedMonotonic = performance.now();
   const response = await fetch(url, {
     ...options,
     cache: "no-store",
@@ -225,12 +290,17 @@ async function requestJson(url, options = {}) {
     },
   });
   const requestFinishedAt = Date.now();
+  const requestFinishedMonotonic = performance.now();
   const serverTimeHeader = response.headers.get("X-Server-Time");
   const serverTime = serverTimeHeader === null ? Number.NaN : Number(serverTimeHeader);
   const roundTripTime = requestFinishedAt - requestStartedAt;
   if (Number.isFinite(serverTime) && roundTripTime <= bestClockSyncRtt) {
     bestClockSyncRtt = roundTripTime;
     serverClockOffset = serverTime - (requestStartedAt + requestFinishedAt) / 2;
+    serverClockAnchor = {
+      serverTime,
+      monotonicTime: (requestStartedMonotonic + requestFinishedMonotonic) / 2,
+    };
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -255,6 +325,7 @@ function acceptSnapshot(snapshot, applyLocally) {
 
 function markOffline(error) {
   backendReady = false;
+  if (backendSocket) backendSocket.close();
   clearTimeout(pollTimer);
   pollTimer = null;
   console.error("[sync] Backend tidak tersedia; perubahan tetap disimpan lokal.", error);
@@ -268,6 +339,128 @@ function scheduleReconnect() {
     reconnectTimer = null;
     void initializeBackend();
   }, RECONNECT_DELAY);
+}
+
+function getWebSocketUrl() {
+  const url = new URL(BACKEND_URL);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/ws";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function scheduleSocketReconnect() {
+  if (!backendReady || socketReconnectTimer) return;
+  const delay = socketReconnectDelay + Math.random() * Math.min(socketReconnectDelay / 4, 500);
+  socketReconnectDelay = Math.min(socketReconnectDelay * 2, 5000);
+  socketReconnectTimer = setTimeout(() => {
+    socketReconnectTimer = null;
+    connectBackendSocket();
+  }, delay);
+}
+
+function rejectPendingClaims() {
+  for (const pending of pendingClaims.values()) {
+    clearTimeout(pending.timeout);
+    pending.reject(new Error("Koneksi terputus saat klaim buzzer dikirim. Hasil klaim belum dapat dipastikan."));
+  }
+  pendingClaims.clear();
+}
+
+function handleSocketMessage(event) {
+  let message;
+  try {
+    message = JSON.parse(event.data);
+  } catch (error) {
+    console.error("[sync] Pesan WebSocket tidak valid.", error);
+    return;
+  }
+  if (message.type === "SYNC_ACK") {
+    const sample = pendingSyncs.get(message.requestId);
+    pendingSyncs.delete(message.requestId);
+    if (sample) clearTimeout(sample.timeout);
+    if (!sample || !Number.isFinite(message.serverTime)) return;
+    const now = performance.now();
+    const roundTripTime = now - sample.monotonicTime;
+    if (roundTripTime <= bestClockSyncRtt) {
+      bestClockSyncRtt = roundTripTime;
+      serverClockOffset = message.serverTime - (sample.wallTime + roundTripTime / 2);
+      serverClockAnchor = {
+        serverTime: message.serverTime,
+        monotonicTime: sample.monotonicTime + roundTripTime / 2,
+      };
+    }
+    return;
+  }
+  if (message.type === "STATE" && message.snapshot) {
+    try {
+      acceptSnapshot(message.snapshot, true);
+      setBackendStatus("live", "LIVE · TERSINKRON");
+      void flushMutationQueue();
+    } catch (error) {
+      console.error("[sync] Snapshot WebSocket tidak valid.", error);
+    }
+    return;
+  }
+  if (message.type === "BUZZ_ACK" && typeof message.requestId === "string") {
+    const pending = pendingClaims.get(message.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    pendingClaims.delete(message.requestId);
+    try {
+      if (message.snapshot) acceptSnapshot(message.snapshot, true);
+      pending.resolve(Boolean(message.accepted));
+    } catch (error) {
+      pending.reject(error);
+    }
+  }
+}
+
+function connectBackendSocket() {
+  if (!backendReady || (backendSocket
+    && (backendSocket.readyState === WebSocket.OPEN || backendSocket.readyState === WebSocket.CONNECTING))) {
+    return;
+  }
+  let socket;
+  try {
+    socket = new WebSocket(getWebSocketUrl());
+    backendSocket = socket;
+  } catch (error) {
+    console.error("[sync] WebSocket tidak dapat dibuat.", error);
+    setBackendStatus("error", "KONEKSI LIVE TERPUTUS · MENYAMBUNG ULANG");
+    schedulePoll();
+    scheduleSocketReconnect();
+    return;
+  }
+  socket.addEventListener("open", () => {
+    if (backendSocket !== socket || !backendReady) return;
+    socketReconnectDelay = 500;
+    clearTimeout(socketReconnectTimer);
+    socketReconnectTimer = null;
+    clearTimeout(pollTimer);
+    pollTimer = null;
+    setBackendStatus("live", "LIVE · TERSINKRON");
+    calibrateClock();
+    clearInterval(socketHeartbeat);
+    socketHeartbeat = setInterval(calibrateClock, 15_000);
+  });
+  socket.addEventListener("message", handleSocketMessage);
+  socket.addEventListener("close", () => {
+    if (backendSocket !== socket) return;
+    backendSocket = null;
+    clearInterval(socketHeartbeat);
+    socketHeartbeat = null;
+    rejectPendingClaims();
+    for (const sample of pendingSyncs.values()) clearTimeout(sample.timeout);
+    pendingSyncs.clear();
+    if (backendReady) {
+      setBackendStatus("error", "KONEKSI LIVE TERPUTUS · MENYAMBUNG ULANG");
+      schedulePoll(0);
+      scheduleSocketReconnect();
+    }
+  });
+  socket.addEventListener("error", () => socket.close());
 }
 
 async function initializeBackend() {
@@ -297,7 +490,8 @@ async function initializeBackend() {
       removeLegacyState();
     }
     backendReady = true;
-    setBackendStatus("live", "LIVE · TERSINKRON");
+    setBackendStatus("connecting", "MENYAMBUNGKAN LIVE...");
+    connectBackendSocket();
     schedulePoll(0);
     void flushMutationQueue();
   } catch (error) {
@@ -317,12 +511,18 @@ function schedulePoll(delay = POLL_INTERVAL) {
 
 async function pollBackendState() {
   if (!backendReady || pollInFlight) return;
+  if (backendSocket?.readyState === WebSocket.OPEN) return;
   pollInFlight = true;
   try {
     const snapshot = await requestJson(`${BACKEND_URL}/state?since=${backendRevision}`);
     if (snapshot) {
       acceptSnapshot(snapshot, true);
-      setBackendStatus("live", "LIVE · TERSINKRON");
+      setBackendStatus(
+        backendSocket?.readyState === WebSocket.OPEN ? "live" : "error",
+        backendSocket?.readyState === WebSocket.OPEN
+          ? "LIVE · TERSINKRON"
+          : "WEBSOCKET TERPUTUS · MENYAMBUNG ULANG",
+      );
       void flushMutationQueue();
     }
   } catch (error) {

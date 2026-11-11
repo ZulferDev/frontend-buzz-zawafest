@@ -53,10 +53,10 @@ function getCurrentQuestion(state) {
 }
 
 function renderBackendStatus(status) {
-  for (const element of document.querySelectorAll("#sync-status, #admin-sync-status")) {
+  for (const element of document.querySelectorAll("#sync-status, #admin-sync-status, #player-sync-status")) {
     if (element.lastChild) element.lastChild.textContent = ` ${status.message}`;
     const live = status.state === "live";
-    const error = status.state === "error";
+    const error = status.state === "error" || status.state === "offline";
     element.style.backgroundColor = live ? "#f0f8f4" : error ? "#fff0f0" : "#fff5e8";
     element.style.color = live ? "#318263" : error ? "#a6383e" : "#96621e";
     const dot = element.querySelector("i");
@@ -385,7 +385,7 @@ function renderPlayer(state) {
         <h1>${escapeHtml(selectedTeam.name)}</h1>
         <div class="player-score">${formatScore(selectedTeam.score)} <span>poin</span></div>
         <div class="player-buzzer-area">${buzzerContent}</div>
-        <div class="player-sync"><i></i> Menunggu pembaruan langsung</div>
+        <div class="player-sync" id="player-sync-status"><i></i> MENGHUBUNGKAN...</div>
       </section>
     </main>
   `, "player-shell");
@@ -614,6 +614,10 @@ async function handleClick(event) {
 
   if (action === "buzz") {
     const teamId = button.dataset.team;
+    button.disabled = true;
+    button.classList.add("is-pending");
+    button.querySelector("span").textContent = "TERKIRIM";
+    button.querySelector("small").textContent = "MENUNGGU HASIL";
     try {
       const accepted = await claimBuzzer(teamId);
       if (accepted) {
@@ -621,6 +625,12 @@ async function handleClick(event) {
         playTeamSound(team);
       }
     } catch (error) {
+      if (button.isConnected) {
+        button.disabled = false;
+        button.classList.remove("is-pending");
+        button.querySelector("span").textContent = "BUZZ!";
+        button.querySelector("small").textContent = "TEKAN SEKALI";
+      }
       showToast(error.message, true);
     }
     return;
